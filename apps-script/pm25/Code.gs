@@ -237,8 +237,7 @@ function createMapImage_(config, amphoe, br, now) {
 
     const file = DriveApp.getFolderById(config.folderId).createFile(response.getAs("image/jpeg").setName(name + ".jpg"))
     try {
-      // ANYONE_WITH_LINK: ดูได้เฉพาะคนที่มีลิงก์ ไม่ถูกค้นเจอแบบ ANYONE
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)
+      file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW)
     }
     catch (error) {
       console.warn("ตั้งค่าแชร์รูปแผนที่ไม่ได้ (โดเมนอาจไม่อนุญาต): " + error.message)

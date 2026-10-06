@@ -29,11 +29,8 @@
 
 | ปัญหา | การแก้ไข |
 | --- | --- |
-| `console.log(Options_jpeg)` พิมพ์ OAuth access token ลง log | ลบออก |
-| ดึงข้อมูล air4thai ผ่าน `http://` (ข้อมูลถูกดักแก้ระหว่างทางได้) | เปลี่ยนเป็น `https://` |
 | นำข้อความจาก API ไปต่อเป็น HTML ในอีเมลโดยไม่ escape (HTML injection) | escape ทุกค่า |
 | บันทึกข้อความจาก API ลงชีตตรง ๆ (formula injection เช่น `=IMPORTXML(...)`) | `appendRowSafe_` ใส่ `'` นำหน้าค่าที่ขึ้นต้นด้วย `= + - @` |
-| แชร์รูปแบบ `Access.ANYONE` (สาธารณะ ค้นหาเจอได้) | เปลี่ยนเป็น `ANYONE_WITH_LINK` |
 | ID ไฟล์และอีเมลผู้รับเขียนไว้ในโค้ด | ย้ายไปเก็บใน Script properties |
 
 ### บั๊ก

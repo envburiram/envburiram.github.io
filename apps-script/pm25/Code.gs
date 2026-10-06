@@ -248,7 +248,13 @@ function createMapImage_(config, amphoe, br, now) {
   }
   finally {
     // ลบสำเนาสไลด์ทุกครั้ง แม้ขั้นตอนก่อนหน้าจะล้มเหลว
-    copy.setTrashed(true)
+    // ห้าม throw จาก finally เพราะจะทับลิงก์รูปที่สร้างเสร็จแล้ว หรือทับ error จริงของขั้นตอนก่อนหน้า
+    try {
+      copy.setTrashed(true)
+    }
+    catch (error) {
+      console.error("ลบสำเนาสไลด์ " + copy.getId() + " ไม่ได้: " + (error && error.stack ? error.stack : error))
+    }
   }
 }
 

@@ -51,10 +51,10 @@ function findMemberById_(id, includeDeleted) {
 /* =========================================================
  * เลขสมาชิก  รูปแบบ BR-<พ.ศ. 2 หลัก>-<ลำดับ 4 หลัก>
  * =======================================================*/
-function nextMemberCode_() {
+function nextMemberCode_(rows) {
   var year = Number(Utilities.formatDate(new Date(), APP.TZ, 'yyyy')) + 543;
   var yy = String(year).substring(2);
-  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+  rows = rows || readTable_(SHEETS.MEMBERS, M_COLS);
   var max = 0;
   rows.forEach(function (r) {
     var m = String(r.member_code || '').match(/^BR-(\d{2})-(\d{4})$/);
@@ -80,8 +80,11 @@ function cleanInput_(d) {
   return out;
 }
 
-/** isPublic : มาจากหน้าสมัครสาธารณะ — ห้ามบอกข้อมูลของสมาชิกที่มีอยู่แล้ว */
-function validateMember_(d, existingId, isPublic) {
+/**
+ * isPublic : มาจากหน้าสมัครสาธารณะ — ห้ามบอกข้อมูลของสมาชิกที่มีอยู่แล้ว
+ * rows : ตารางสมาชิกที่อ่านไว้แล้ว (ไม่ส่งมาจะอ่านใหม่)
+ */
+function validateMember_(d, existingId, isPublic, rows) {
   var e = [];
   if (!d.prefix) e.push('กรุณาเลือกคำนำหน้า');
   if (!d.first_name) e.push('กรุณากรอกชื่อ');
@@ -105,31 +108,64 @@ function validateMember_(d, existingId, isPublic) {
   if (d.work_type && WORK_TYPES.indexOf(d.work_type) < 0) e.push('ประเภทหน่วยงานไม่ถูกต้อง');
 
   // กันเลขบัตรประชาชนซ้ำ โดยไม่ต้องถอดรหัสทั้งตาราง
-  if (d.national_id) {
-    var idx = blindIndex_('nid', d.national_id);
-    var rows = readTable_(SHEETS.MEMBERS, M_COLS);
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].nid_idx === idx && rows[i].status !== 'deleted' &&
-        String(rows[i].id) !== String(existingId || '')) {
-        // หน้าสาธารณะไม่บอกเลขสมาชิก เพราะใครก็ใช้เลขบัตรประชาชนของคนอื่นสอบถามได้
-        e.push(isPublic ? 'เลขประจำตัวประชาชนนี้สมัครไว้แล้ว หากต้องการแก้ไขข้อมูลกรุณาติดต่อชมรม'
-          : 'เลขประจำตัวประชาชนนี้มีในระบบแล้ว (เลขสมาชิก ' + rows[i].member_code + ')');
-        break;
-      }
-    }
-  }
+  var dup = d.national_id ? nidTaken_(d.national_id, existingId, rows) : null;
+  if (dup) e.push(dupNidMessage_(dup, isPublic));
   return e;
+}
+
+/** แถวสมาชิก (ที่ยังไม่ถูกลบ) ที่ใช้เลขบัตรประชาชนนี้อยู่แล้ว หรือ null */
+function nidTaken_(nid, existingId, rows) {
+  var idx = blindIndex_('nid', nid);
+  rows = rows || readTable_(SHEETS.MEMBERS, M_COLS);
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].nid_idx === idx && rows[i].status !== 'deleted' &&
+      String(rows[i].id) !== String(existingId || '')) return rows[i];
+  }
+  return null;
+}
+
+/** เพดานจากข้อมูลจริงในตาราง : ใบสมัครรอตรวจสอบค้าง และใบสมัครผ่านเว็บของวันนี้ (เวลาไทย) */
+function registerLimitReason_(rows) {
+  var today = fmtDate_(new Date());
+  var pending = 0, todayCount = 0;
+  rows.forEach(function (r) {
+    if (r.status === 'pending') pending++;
+    if (r.created_by === 'สมัครผ่านเว็บ' && String(r.created_at).substring(0, 10) === today) todayCount++;
+  });
+  if (pending >= APP.MAX_PENDING) return 'ขณะนี้มีใบสมัครรอตรวจสอบจำนวนมาก กรุณาติดต่อชมรม';
+  if (todayCount >= APP.REGISTER_PER_DAY) return 'วันนี้รับสมัครครบจำนวนแล้ว กรุณาสมัครใหม่พรุ่งนี้ หรือติดต่อชมรม';
+  return '';
+}
+
+/** แจ้งในประวัติ 1 ครั้งต่อ 10 นาทีเมื่อการรับสมัครถูกจำกัด ผู้ดูแลจะได้รู้ว่ามีการปิดรับอยู่ */
+function noteRegisterLimited_(reason) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var key = 'REGLIMIT:' + Math.floor(new Date().getTime() / 600000);
+    if (cache.get(key)) return;
+    cache.put(key, '1', 900);
+    writeLog_({ username: 'ระบบ', role: 'system' }, 'security.register_limited', 'system', '-',
+      'ปฏิเสธใบสมัครจากหน้าเว็บเพราะถึงเพดาน : ' + reason, { reason: reason });
+  } catch (e) { }
+}
+
+/** หน้าสาธารณะไม่บอกเลขสมาชิก เพราะใครก็ใช้เลขบัตรประชาชนของคนอื่นสอบถามได้ */
+function dupNidMessage_(row, isPublic) {
+  return isPublic ? 'เลขประจำตัวประชาชนนี้สมัครไว้แล้ว หากต้องการแก้ไขข้อมูลกรุณาติดต่อชมรม'
+    : 'เลขประจำตัวประชาชนนี้มีในระบบแล้ว (เลขสมาชิก ' + row.member_code + ')';
 }
 
 /* =========================================================
  * ไฟล์รูปถ่าย / ลายเซ็น
  * =======================================================*/
-function saveMedia_(dataUrl, prefix, memberCode) {
+function saveMedia_(dataUrl, prefix, memberCode, maxBytes) {
   if (!dataUrl) return '';
+  maxBytes = maxBytes || APP.MAX_IMAGE_BYTES;
   var m = String(dataUrl).match(/^data:(image\/(png|jpeg|jpg|webp));base64,(.+)$/);
   if (!m) throw new Error('ไฟล์รูปต้องเป็น PNG, JPG หรือ WEBP เท่านั้น');
+  if (m[3].length > Math.ceil(maxBytes * 4 / 3) + 4) throw new Error('ไฟล์รูปใหญ่เกิน ' + Math.round(maxBytes / 1000) + ' KB');
   var bytes = Utilities.base64Decode(m[3]);
-  if (bytes.length > APP.MAX_IMAGE_BYTES) throw new Error('ไฟล์รูปใหญ่เกิน 1.5 MB');
+  if (bytes.length > maxBytes) throw new Error('ไฟล์รูปใหญ่เกิน ' + Math.round(maxBytes / 1000) + ' KB');
   var folderId = PropertiesService.getScriptProperties().getProperty('MEDIA_FOLDER_ID');
   var folder = DriveApp.getFolderById(folderId);
   var ext = m[2] === 'jpeg' ? 'jpg' : m[2];
@@ -139,9 +175,10 @@ function saveMedia_(dataUrl, prefix, memberCode) {
   return file.getId();
 }
 
+/** ลบรูปถ่าย/ลายเซ็นถาวร (ไม่ค้างในถังขยะของเจ้าของ 30 วัน) */
 function deleteMedia_(fileId) {
   if (!fileId) return;
-  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) { }
+  deleteFilePermanently_(fileId);
 }
 
 function mediaDataUrl_(fileId) {
@@ -161,60 +198,86 @@ function mediaDataUrl_(fileId) {
  * สมัครสมาชิกผ่านหน้าเว็บ (สาธารณะ)
  * =======================================================*/
 function apiRegister(payload, client) {
-  return withScriptLock_(function () {
-    var s = getSettings_();
-    if (s.OPEN_REGISTER !== 'yes') return { ok: false, error: 'ขณะนี้ปิดรับสมัครสมาชิกชั่วคราว' };
+  var s = getSettings_();
+  if (s.OPEN_REGISTER !== 'yes') return { ok: false, error: 'ขณะนี้ปิดรับสมัครสมาชิกชั่วคราว' };
 
-    var d = cleanInput_(payload || {});
-    // ผู้สมัครกำหนดสถานะ วันออกบัตร และหมายเหตุของผู้ดูแลเองไม่ได้
-    delete d.status; delete d.issue_date; delete d.expire_date; delete d.note;
-    if (!payload || payload.consent !== true) {
-      return { ok: false, error: 'กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคลก่อนส่งใบสมัคร' };
-    }
-    var errs = validateMember_(d, null, true);
-    if (errs.length) return { ok: false, error: errs.join('\n') };
+  var d = cleanInput_(payload || {});
+  // ผู้สมัครกำหนดสถานะ วันออกบัตร และหมายเหตุของผู้ดูแลเองไม่ได้
+  delete d.status; delete d.issue_date; delete d.expire_date; delete d.note;
+  if (!payload || payload.consent !== true) {
+    return { ok: false, error: 'กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคลก่อนส่งใบสมัคร' };
+  }
+  var rows0 = readTable_(SHEETS.MEMBERS, M_COLS);
+  var errs = validateMember_(d, null, true, rows0);
+  if (errs.length) return { ok: false, error: errs.join('\n') };
 
-    var code = nextMemberCode_();
-    var photoId = '', signId = '';
-    try {
-      photoId = saveMedia_(payload.photo_data, 'photo', code);
-      signId = saveMedia_(payload.signature_data, 'sign', code);
-    } catch (err) {
-      deleteMedia_(photoId); deleteMedia_(signId);
-      return { ok: false, error: err.message };
-    }
+  // จำกัดจำนวนใบสมัครจากหน้าสาธารณะ ก่อนอัปโหลดรูปลง Drive ของเจ้าของระบบ
+  // (Apps Script ไม่รู้ IP ผู้ส่ง จึงเป็นเพดานรวม : กัน Drive/สเปรดชีตเต็ม แลกกับการที่ผู้ยิงสแปมทำให้ปิดรับชั่วคราวได้)
+  var limited = registerLimitReason_(rows0) || (!rateAllow_('register10m', APP.REGISTER_PER_10MIN, 600)
+    ? 'มีผู้สมัครจำนวนมากในขณะนี้ กรุณาลองใหม่ในอีกสักครู่' : '');
+  if (limited) { noteRegisterLimited_(limited); return { ok: false, error: limited }; }
 
-    var today = fmtDate_(new Date());
-    var m = Object.assign({}, d, {
-      id: uuid_(),
-      member_code: code,
-      status: 'pending',
-      member_type: d.member_type || 'สามัญ',
-      photo_id: photoId,
-      signature_id: signId,
-      issue_date: '',
-      expire_date: '',
-      consent_version: APP.CONSENT_VERSION,
-      consent_at: now_(),
-      consent_marketing: payload.consent_marketing ? 'yes' : 'no',
-      verify_token: randomToken_(18),
-      created_at: now_(), created_by: 'สมัครผ่านเว็บ',
-      updated_at: now_(), updated_by: 'สมัครผ่านเว็บ'
-    });
+  // งานที่ช้า (บันทึกรูปลง Drive, เข้ารหัส) ทำก่อนเข้า lock ให้ถือ lock สั้นที่สุด
+  // ผู้สมัครหลายคนส่งพร้อมกัน (เช่นสแกน QR ในที่ประชุม) จะได้ไม่ล้มเพราะรอ lock นาน
+  var tag = uuid_().substring(0, 8);
+  var photoId = '', signId = '';
+  try {
+    photoId = saveMedia_(payload.photo_data, 'photo', tag, APP.MAX_PUBLIC_IMAGE_BYTES);
+    signId = saveMedia_(payload.signature_data, 'sign', tag, APP.MAX_PUBLIC_IMAGE_BYTES);
+  } catch (err) {
+    deleteMedia_(photoId); deleteMedia_(signId);
+    return { ok: false, error: err.message };
+  }
 
-    appendRow_(SHEETS.MEMBERS, M_COLS, encodeMember_(m));
-    appendRow_(SHEETS.CONSENT, CONSENT_COLS, {
-      ts: now_(), member_id: m.id, member_code: code, consent_version: APP.CONSENT_VERSION,
-      purposes: 'การเป็นสมาชิก, การออกบัตร, การติดต่อ' + (m.consent_marketing === 'yes' ? ', ข่าวสาร/กิจกรรม' : ''),
-      channel: 'เว็บไซต์รับสมัคร', client: String(client || '').substring(0, 250)
-    });
+  var m = Object.assign({}, d, {
+    id: uuid_(),
+    member_code: '',
+    status: 'pending',
+    member_type: d.member_type || 'สามัญ',
+    photo_id: photoId,
+    signature_id: signId,
+    issue_date: '',
+    expire_date: '',
+    consent_version: APP.CONSENT_VERSION,
+    consent_at: now_(),
+    consent_marketing: payload.consent_marketing ? 'yes' : 'no',
+    verify_token: randomToken_(18),
+    created_at: now_(), created_by: 'สมัครผ่านเว็บ',
+    updated_at: now_(), updated_by: 'สมัครผ่านเว็บ'
+  });
+  var res;
+  try {
+    res = withScriptLock_(function () {
+      // อ่านกุญแจใหม่ภายใน lock : ถ้าเพิ่งหมุนกุญแจเสร็จระหว่างรอ lock ต้องเข้ารหัสและทำดัชนีด้วยกุญแจใหม่
+      cryptoResetCache_();
+      var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+      var why = registerLimitReason_(rows);
+      if (why) { noteRegisterLimited_(why); return { ok: false, error: why }; }
+      // ตรวจเลขบัตรซ้ำอีกครั้งภายใน lock กันสองคำขอที่ส่งเลขเดียวกันพร้อมกัน แล้วจึงออกเลขสมาชิก
+      var dup = nidTaken_(d.national_id, null, rows);
+      if (dup) return { ok: false, error: dupNidMessage_(dup, true) };
+      m.member_code = nextMemberCode_(rows);
+      appendRow_(SHEETS.MEMBERS, M_COLS, encodeMember_(m));
+      return { ok: true, member_code: m.member_code, message: 'ส่งใบสมัครเรียบร้อย' };
+    }, 30000);
+  } catch (err) {
+    deleteMedia_(photoId); deleteMedia_(signId);
+    throw err;
+  }
+  if (!res.ok) { deleteMedia_(photoId); deleteMedia_(signId); return res; }
 
+  var code = res.member_code;
+  appendRow_(SHEETS.CONSENT, CONSENT_COLS, {
+    ts: now_(), member_id: m.id, member_code: code, consent_version: APP.CONSENT_VERSION,
+    purposes: 'การเป็นสมาชิก, การออกบัตร, การติดต่อ' + (m.consent_marketing === 'yes' ? ', ข่าวสาร/กิจกรรม' : ''),
+    channel: 'เว็บไซต์รับสมัคร', client: String(client || '').substring(0, 250)
+  });
+  if (allowPublicLog_('register')) {
     writeLog_({ username: 'ผู้สมัคร', role: 'public' }, 'member.register', 'member', code,
       'มีผู้สมัครสมาชิกใหม่ เลขสมาชิก ' + code + ' หน่วยงาน ' + (d.organization || '-'),
       { member_code: code, organization: d.organization, position: d.position }, client);
-
-    return { ok: true, member_code: code, message: 'ส่งใบสมัครเรียบร้อย' };
-  });
+  }
+  return res;
 }
 
 /* =========================================================
@@ -272,7 +335,8 @@ function apiListMembers(token, opt) {
 
 function apiStats(token) {
   requireAuth_(token);
-  var all = loadMembers_(false);
+  // ใช้เฉพาะฟิลด์ที่ไม่เข้ารหัส จึงอ่านตารางตรง ๆ ไม่ต้องถอดรหัสทุกคน
+  var all = readTable_(SHEETS.MEMBERS, M_COLS).filter(function (r) { return r.status !== 'deleted'; });
   var byStatus = {}, byType = {}, byWork = {};
   all.forEach(function (m) {
     byStatus[m.status] = (byStatus[m.status] || 0) + 1;
@@ -387,21 +451,25 @@ function apiUpdateMember(token, id, data, client) {
     var errs = validateMember_(merged, cur.id);
     if (errs.length) return { ok: false, error: errs.join('\n') };
 
-    // ไฟล์รูป
-    var mediaChanges = [];
-    if (data.photo_data) {
-      var newPhoto = saveMedia_(data.photo_data, 'photo', cur.member_code);
-      deleteMedia_(cur.photo_id);
-      merged.photo_id = newPhoto; mediaChanges.push('เปลี่ยนรูปถ่าย');
-    } else if (data.remove_photo) {
-      deleteMedia_(cur.photo_id); merged.photo_id = ''; mediaChanges.push('ลบรูปถ่าย');
-    }
-    if (data.signature_data) {
-      var newSign = saveMedia_(data.signature_data, 'sign', cur.member_code);
-      deleteMedia_(cur.signature_id);
-      merged.signature_id = newSign; mediaChanges.push('เปลี่ยนลายเซ็น');
-    } else if (data.remove_signature) {
-      deleteMedia_(cur.signature_id); merged.signature_id = ''; mediaChanges.push('ลบลายเซ็น');
+    // ไฟล์รูป : บันทึกไฟล์ใหม่ก่อน ส่วนไฟล์เดิมลบ (ถาวร) หลังบันทึกแถวสำเร็จเท่านั้น
+    // ถ้าขั้นใดล้มกลางทาง ให้ลบเฉพาะไฟล์ใหม่ ไฟล์เดิมของสมาชิกยังอยู่ครบ
+    var mediaChanges = [], created = [], toDelete = [];
+    try {
+      if (data.photo_data) {
+        merged.photo_id = saveMedia_(data.photo_data, 'photo', cur.member_code);
+        created.push(merged.photo_id); toDelete.push(cur.photo_id); mediaChanges.push('เปลี่ยนรูปถ่าย');
+      } else if (data.remove_photo && cur.photo_id) {
+        merged.photo_id = ''; toDelete.push(cur.photo_id); mediaChanges.push('ลบรูปถ่าย');
+      }
+      if (data.signature_data) {
+        merged.signature_id = saveMedia_(data.signature_data, 'sign', cur.member_code);
+        created.push(merged.signature_id); toDelete.push(cur.signature_id); mediaChanges.push('เปลี่ยนลายเซ็น');
+      } else if (data.remove_signature && cur.signature_id) {
+        merged.signature_id = ''; toDelete.push(cur.signature_id); mediaChanges.push('ลบลายเซ็น');
+      }
+    } catch (err) {
+      created.forEach(deleteMedia_);
+      return { ok: false, error: err.message };
     }
 
     // ปรับวันบัตรเมื่อเปลี่ยนสถานะเป็นสมาชิกปัจจุบัน
@@ -419,7 +487,13 @@ function apiUpdateMember(token, id, data, client) {
 
     merged.updated_at = now_();
     merged.updated_by = s.username;
-    updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(merged));
+    try {
+      updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(merged));
+    } catch (err) {
+      created.forEach(deleteMedia_);
+      throw err;
+    }
+    toDelete.forEach(deleteMedia_);
 
     var parts = diff.map(function (x) { return x.label; }).concat(mediaChanges);
     writeLog_(s, 'member.update', 'member', cur.member_code,
@@ -487,7 +561,7 @@ function apiPurgeMember(token, id, reason, client) {
       if (String(rows[i].id) === String(id)) {
         var m = decodeMember_(rows[i]);
         deleteMedia_(m.photo_id); deleteMedia_(m.signature_id);
-        sheet_(SHEETS.MEMBERS).deleteRow(rows[i]._row);
+        deleteRowSafe_(sheet_(SHEETS.MEMBERS), rows[i]._row);
         writeLog_(s, 'member.purge', 'member', m.member_code,
           'ลบข้อมูลสมาชิกถาวร ' + m.member_code + (reason ? ' เหตุผล: ' + reason : ''),
           { member_code: m.member_code, reason: reason }, client);
@@ -563,9 +637,11 @@ function apiVerify(t, client) {
       if (m.status === 'deleted') break;
       var expired = m.expire_date && m.expire_date < fmtDate_(new Date());
       var status = expired && m.status === 'active' ? 'expired' : m.status;
-      writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', m.member_code,
-        'ตรวจสอบบัตรสมาชิก ' + m.member_code + ' ผลลัพธ์ ' + (STATUS_LABELS[status] || status),
-        { member_code: m.member_code, status: status }, client);
+      if (allowPublicLog_('verify')) {
+        writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', m.member_code,
+          'ตรวจสอบบัตรสมาชิก ' + m.member_code + ' ผลลัพธ์ ' + (STATUS_LABELS[status] || status),
+          { member_code: m.member_code, status: status }, client);
+      }
       return {
         ok: true,
         valid: status === 'active',
@@ -584,7 +660,9 @@ function apiVerify(t, client) {
       };
     }
   }
-  writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', '-',
-    'ตรวจสอบบัตรด้วยรหัสที่ไม่มีในระบบ', {}, client);
+  if (allowPublicLog_('verify')) {
+    writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', '-',
+      'ตรวจสอบบัตรด้วยรหัสที่ไม่มีในระบบ', {}, client);
+  }
   return { ok: true, valid: false, notfound: true };
 }

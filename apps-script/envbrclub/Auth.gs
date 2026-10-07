@@ -45,19 +45,37 @@ function checkPasswordPolicy_(pw) {
 
 /* ---------- เข้าสู่ระบบ ---------- */
 function apiLogin(username, password, client) {
+  var started = new Date().getTime();
   // ตัดความยาวไว้ กันคนภายนอกส่งชื่อผู้ใช้ยาวมากเข้าไปเต็มบันทึกประวัติ
   var u = String(username || '').toLowerCase().trim().substring(0, 64);
   var cache = CacheService.getScriptCache();
   var failKey = 'FAIL:' + u;
   var fails = Number(cache.get(failKey) || 0);
 
+  var a = findAdmin_(u);
+  // บัญชีที่มีอยู่จริงมีโควตาบันทึกของตัวเอง (คำขอขนานจึงเบียดบันทึกของบัญชีจริงไม่ได้)
+  // ชื่อผู้ใช้ที่ไม่มีในระบบใช้โควตารวม กันการยิงชื่อสุ่มจน AuditLog เต็ม
+  var shouldLog = function () { return a ? allowPublicLog_('auth:' + u, 20) : allowPublicLog_('auth'); };
+  // ไม่สำเร็จทุกกรณีตอบช้าเท่ากัน (การบันทึกหรือไม่บันทึกประวัติจึงไม่บอกใบ้ว่าชื่อผู้ใช้มีจริง)
+  var failResponse = function (msg) {
+    var wait = APP.LOGIN_FAIL_MIN_MS - (new Date().getTime() - started);
+    if (wait > 0) Utilities.sleep(Math.min(wait, APP.LOGIN_FAIL_MIN_MS));
+    return { ok: false, error: msg };
+  };
+
   if (fails >= APP.MAX_LOGIN_FAIL) {
-    writeLog_({ username: u, role: '-' }, 'auth.locked', 'admin', u,
-      'บัญชีถูกล็อกชั่วคราวจากการกรอกรหัสผ่านผิดเกินกำหนด', {}, client);
-    return { ok: false, error: 'กรอกรหัสผ่านผิดเกิน ' + APP.MAX_LOGIN_FAIL + ' ครั้ง บัญชีถูกล็อก ' + APP.LOCK_MINUTES + ' นาที' };
+    // บันทึกครั้งเดียวต่อช่วงที่ถูกล็อก ไม่ใช่ทุกครั้งที่ถูกปฏิเสธ
+    if (!cache.get('LOCKLOG:' + u) && shouldLog()) {
+      cache.put('LOCKLOG:' + u, '1', APP.LOCK_MINUTES * 60);
+      writeLog_({ username: u, role: '-' }, 'auth.locked', 'admin', u,
+        'บัญชีถูกล็อกชั่วคราวจากการกรอกรหัสผ่านผิดเกินกำหนด', {}, client);
+    }
+    return failResponse('กรอกรหัสผ่านผิดเกิน ' + APP.MAX_LOGIN_FAIL + ' ครั้ง บัญชีถูกล็อก ' + APP.LOCK_MINUTES + ' นาที');
   }
 
-  var a = findAdmin_(u);
+  // นับครั้งก่อนคำนวณ PBKDF2 (2-5 วินาที) ไม่เช่นนั้นคำขอขนานจะอ่านค่าเดิมพร้อมกันจนเกินเพดาน lockout
+  cache.put(failKey, String(fails + 1), APP.LOCK_MINUTES * 60);
+
   var ok = false;
   if (a && a.status === 'active') {
     ok = verifyPassword_(String(password || ''), a.pw_hash, a.pw_salt, a.pw_iter);
@@ -65,19 +83,24 @@ function apiLogin(username, password, client) {
     // คำนวณ PBKDF2 ทิ้งไว้ ให้เวลาตอบสนองเท่ากับกรณีมีบัญชีจริง ไม่ให้เดาได้ว่าชื่อผู้ใช้ไหนมีอยู่
     pbkdf2_(String(password || ''), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], CRYPTO_CFG.PBKDF2_ITER);
   }
+  if (ok) {
+    // ระหว่างคำนวณ PBKDF2 (2-5 วินาที) บัญชีอาจถูกระงับ เปลี่ยนสิทธิ์ หรือเปลี่ยนรหัสผ่านไปแล้ว ให้ใช้ข้อมูลล่าสุด
+    var fresh = findAdmin_(u);
+    ok = !!fresh && fresh.status === 'active' && fresh.pw_hash === a.pw_hash && fresh.pw_salt === a.pw_salt;
+    a = fresh;
+  }
 
   if (!ok) {
-    cache.put(failKey, String(fails + 1), APP.LOCK_MINUTES * 60);
-    writeLog_({ username: u || '(ไม่ระบุ)', role: '-' }, 'auth.fail', 'admin', u,
-      'เข้าสู่ระบบไม่สำเร็จ (ครั้งที่ ' + (fails + 1) + ')', {}, client);
-    Utilities.sleep(600); // หน่วงเพื่อชะลอการเดารหัสผ่าน
-    return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
+    if (shouldLog()) {
+      writeLog_({ username: u || '(ไม่ระบุ)', role: '-' }, 'auth.fail', 'admin', u,
+        'เข้าสู่ระบบไม่สำเร็จ (ครั้งที่ ' + (fails + 1) + ')', {}, client);
+    }
+    return failResponse('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
   }
 
   cache.remove(failKey);
   var sess = createSession_(a, client);
-  updateRow_(SHEETS.ADMINS, ADMIN_COLS, a._row,
-    Object.assign({}, a, { last_login: now_(), fail_count: 0 }));
+  updateCells_(SHEETS.ADMINS, ADMIN_COLS, a._row, { last_login: now_(), fail_count: 0 });
 
   writeLog_(sess, 'auth.login', 'admin', a.username, 'เข้าสู่ระบบสำเร็จ', {}, client);
   return {
@@ -153,7 +176,7 @@ function destroySession_(token) {
     var sh = sheet_(SHEETS.SESSIONS);
     var rows = readTable_(SHEETS.SESSIONS, SESSION_COLS);
     for (var i = rows.length - 1; i >= 0; i--) {
-      if (rows[i].token_hash === hash) { sh.deleteRow(rows[i]._row); break; }
+      if (rows[i].token_hash === hash) { deleteRowSafe_(sh, rows[i]._row); break; }
     }
   });
 }
@@ -168,7 +191,7 @@ function destroyUserSessions_(username, keepHash) {
     for (var i = rows.length - 1; i >= 0; i--) {
       if (String(rows[i].username).toLowerCase() === u && rows[i].token_hash !== keepHash) {
         cache.remove('SESS:' + rows[i].token_hash);
-        sh.deleteRow(rows[i]._row);
+        deleteRowSafe_(sh, rows[i]._row);
       }
     }
   });
@@ -202,7 +225,7 @@ function cleanupSessions_() {
     var rows = readTable_(SHEETS.SESSIONS, SESSION_COLS);
     var t = now_();
     for (var i = rows.length - 1; i >= 0; i--) {
-      if (String(rows[i].expire_at) < t) sh.deleteRow(rows[i]._row);
+      if (String(rows[i].expire_at) < t) deleteRowSafe_(sh, rows[i]._row);
     }
   });
 }
@@ -241,9 +264,9 @@ function apiChangePassword(token, oldPw, newPw) {
   if (String(newPw) === String(oldPw || '')) return { ok: false, error: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม' };
 
   var h = hashPassword_(newPw);
-  updateRow_(SHEETS.ADMINS, ADMIN_COLS, a._row, Object.assign({}, a, {
+  updateCells_(SHEETS.ADMINS, ADMIN_COLS, a._row, {
     pw_hash: h.hash, pw_salt: h.salt, pw_iter: h.iter, must_change: 'no'
-  }));
+  });
   // เซสชันอื่นที่ใช้รหัสผ่านเดิมถูกยกเลิก เหลือเฉพาะเซสชันที่ใช้เปลี่ยนรหัสผ่าน
   destroyUserSessions_(a.username, sha256b64_(token));
   clearSessionMustChange_(token);
@@ -290,35 +313,36 @@ function apiUpdateAdmin(token, username, data) {
   data = data || {};
   var changes = [];
   var next = Object.assign({}, a);
+  var patch = {};   // เขียนเฉพาะช่องที่เปลี่ยน ไม่เขียนทับทั้งแถว
   var lastActiveSuper = a.role === 'superadmin' && a.status === 'active' && countSuperadmins_() <= 1;
 
   if (data.display_name !== undefined && data.display_name !== a.display_name) {
-    next.display_name = String(data.display_name).substring(0, 120); changes.push('ชื่อผู้ใช้งาน');
+    patch.display_name = next.display_name = String(data.display_name).substring(0, 120); changes.push('ชื่อผู้ใช้งาน');
   }
   if (data.email !== undefined && data.email !== a.email) {
-    next.email = String(data.email).substring(0, 120); changes.push('อีเมล');
+    patch.email = next.email = String(data.email).substring(0, 120); changes.push('อีเมล');
   }
   if (data.role && data.role !== a.role) {
     if (['superadmin', 'admin', 'viewer'].indexOf(data.role) < 0) return { ok: false, error: 'ระดับสิทธิ์ไม่ถูกต้อง' };
     if (lastActiveSuper) return { ok: false, error: 'ต้องมีผู้ดูแลสูงสุดอย่างน้อย 1 บัญชี' };
-    next.role = data.role; changes.push('สิทธิ์: ' + a.role + ' → ' + data.role);
+    patch.role = next.role = data.role; changes.push('สิทธิ์: ' + a.role + ' → ' + data.role);
   }
   if (data.status && data.status !== a.status) {
     if (['active', 'disabled'].indexOf(data.status) < 0) return { ok: false, error: 'สถานะบัญชีไม่ถูกต้อง' };
     if (lastActiveSuper) return { ok: false, error: 'ต้องมีผู้ดูแลสูงสุดที่ใช้งานได้อย่างน้อย 1 บัญชี' };
-    next.status = data.status; changes.push('สถานะ: ' + a.status + ' → ' + data.status);
+    patch.status = next.status = data.status; changes.push('สถานะ: ' + a.status + ' → ' + data.status);
   }
   if (data.password) {
     var err = checkPasswordPolicy_(data.password);
     if (err) return { ok: false, error: err };
     var h = hashPassword_(data.password);
-    next.pw_hash = h.hash; next.pw_salt = h.salt; next.pw_iter = h.iter; next.must_change = 'yes';
+    patch.pw_hash = h.hash; patch.pw_salt = h.salt; patch.pw_iter = h.iter; patch.must_change = 'yes';
     changes.push('ตั้งรหัสผ่านใหม่');
     CacheService.getScriptCache().remove('FAIL:' + a.username);
   }
   if (!changes.length) return { ok: true, note: 'ไม่มีการเปลี่ยนแปลง' };
 
-  updateRow_(SHEETS.ADMINS, ADMIN_COLS, a._row, next);
+  updateCells_(SHEETS.ADMINS, ADMIN_COLS, a._row, patch);
   // ระงับบัญชี เปลี่ยนสิทธิ์ หรือตั้งรหัสผ่านใหม่ ต้องมีผลทันที ไม่รอเซสชันเดิมหมดอายุ (สูงสุด 6 ชั่วโมง)
   if (next.status !== a.status || next.role !== a.role || data.password) destroyUserSessions_(a.username);
   writeLog_(s, 'admin.update', 'admin', a.username,
@@ -334,18 +358,19 @@ function countSuperadmins_() {
 
 /** ใช้กรณีลืมรหัสผ่านทั้งระบบ : เรียกจากตัวแก้ไขสคริปต์เท่านั้น */
 function resetSuperadminPassword() {
+  requireEditor_();
   var a = readTable_(SHEETS.ADMINS, ADMIN_COLS).filter(function (r) { return r.role === 'superadmin'; })[0];
   if (!a) throw new Error('ไม่พบบัญชีผู้ดูแลสูงสุด');
   var pw = tempPassword_();
   var h = hashPassword_(pw);
-  updateRow_(SHEETS.ADMINS, ADMIN_COLS, a._row, Object.assign({}, a, {
+  updateCells_(SHEETS.ADMINS, ADMIN_COLS, a._row, {
     pw_hash: h.hash, pw_salt: h.salt, pw_iter: h.iter, must_change: 'yes', status: 'active'
-  }));
+  });
   CacheService.getScriptCache().remove('FAIL:' + a.username);
   destroyUserSessions_(a.username);
   writeLog_({ username: 'ระบบ', role: 'system' }, 'admin.reset_pw', 'admin', a.username,
     'ตั้งรหัสผ่านใหม่จากตัวแก้ไขสคริปต์', {});
-  var msg = 'ชื่อผู้ใช้ : ' + a.username + '\nรหัสผ่านใหม่ : ' + pw;
-  Logger.log(msg);
-  return msg;
+  Logger.log('ชื่อผู้ใช้ : ' + a.username + '\nรหัสผ่านใหม่ : ' + pw);
+  // รหัสผ่านแสดงเฉพาะใน Execution log ไม่ส่งกลับเป็นค่าของฟังก์ชัน
+  return 'ตั้งรหัสผ่านใหม่ให้ ' + a.username + ' แล้ว ดูรหัสผ่านใน Execution log';
 }

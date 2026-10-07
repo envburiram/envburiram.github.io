@@ -45,15 +45,33 @@ function cryptoSubKey_(label) {
   return c[label];
 }
 
-/** กุญแจย่อยจากกุญแจชุดก่อน (หลังหมุนกุญแจ) ใช้ถอดรหัสข้อมูลที่ยังไม่ถูกเข้ารหัสใหม่ — ไม่มีคืน null */
-function cryptoPrevSubKey_(label) {
-  if (cryptoPrevSubKey_._none) return null;
-  var c = cryptoPrevSubKey_._c || (cryptoPrevSubKey_._c = {});
-  if (c[label]) return c[label];
-  var b64 = PropertiesService.getScriptProperties().getProperty('MASTER_KEY_PREV_B64');
-  if (!b64) { cryptoPrevSubKey_._none = true; return null; }
-  c[label] = Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|' + label), Utilities.base64Decode(b64));
-  return c[label];
+/**
+ * กุญแจสำรองสำหรับถอดรหัส (ไม่ใช้เข้ารหัส) :
+ *   MASTER_KEY_PREV_B64 กุญแจชุดก่อนหลังหมุนกุญแจ (ข้อมูลที่ถูกเขียนระหว่างหมุนยังอ่านได้)
+ *   MASTER_KEY_NEXT_B64 กุญแจใหม่ระหว่างที่การหมุนยังไม่เสร็จ (ถ้าหมุนค้างครึ่งทาง ข้อมูลที่เขียนไปแล้วยังอ่านได้)
+ * คืนรายการ {mac, enc} ของกุญแจที่มีอยู่
+ */
+function cryptoAltKeys_() {
+  if (cryptoAltKeys_._list) return cryptoAltKeys_._list;
+  var props = PropertiesService.getScriptProperties();
+  cryptoAltKeys_._list = ['MASTER_KEY_PREV_B64', 'MASTER_KEY_NEXT_B64']
+    .map(function (k) { return props.getProperty(k); })
+    .filter(Boolean)
+    .map(function (b64) {
+      var master = Utilities.base64Decode(b64);
+      return {
+        mac: Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|mac'), master),
+        enc: Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|enc'), master)
+      };
+    });
+  return cryptoAltKeys_._list;
+}
+
+/** ล้างกุญแจที่แคชไว้ในการทำงานรอบนี้ (หลังเปลี่ยน Script Properties ของกุญแจ) */
+function cryptoResetCache_() {
+  cryptoGetMasterKey_._k = null;
+  cryptoSubKey_._c = null;
+  cryptoAltKeys_._list = null;
 }
 
 /* ---------- ตัวช่วยระดับไบต์ ---------- */
@@ -121,11 +139,11 @@ function decryptField_(cipher) {
     var tag = Utilities.base64Decode(parts[3]);
     var expect = Utilities.computeHmacSha256Signature(iv.concat(ct), cryptoSubKey_('mac')).slice(0, CRYPTO_CFG.TAG_LEN);
     if (constEq_(tag, expect)) return bytesStr_(xorBytes_(ct, keystream_(cryptoSubKey_('enc'), iv, ct.length)));
-    // ข้อมูลที่ยังเข้ารหัสด้วยกุญแจชุดก่อน (เช่นการหมุนกุญแจถูกขัดจังหวะ) ยังอ่านได้
-    var prevMac = cryptoPrevSubKey_('mac');
-    if (prevMac) {
-      var expectPrev = Utilities.computeHmacSha256Signature(iv.concat(ct), prevMac).slice(0, CRYPTO_CFG.TAG_LEN);
-      if (constEq_(tag, expectPrev)) return bytesStr_(xorBytes_(ct, keystream_(cryptoPrevSubKey_('enc'), iv, ct.length)));
+    // ข้อมูลที่ยังเข้ารหัสด้วยกุญแจชุดก่อน หรือกุญแจใหม่ของการหมุนที่ยังไม่เสร็จ ยังอ่านได้
+    var alt = cryptoAltKeys_();
+    for (var i = 0; i < alt.length; i++) {
+      var expectAlt = Utilities.computeHmacSha256Signature(iv.concat(ct), alt[i].mac).slice(0, CRYPTO_CFG.TAG_LEN);
+      if (constEq_(tag, expectAlt)) return bytesStr_(xorBytes_(ct, keystream_(alt[i].enc, iv, ct.length)));
     }
     return '[ข้อมูลถูกแก้ไข]';
   } catch (e) {
@@ -191,6 +209,7 @@ function verifyPassword_(password, hashB64, saltB64, iter) {
 
 /* ---------- ตรวจสอบความถูกต้องของระบบเข้ารหัส ---------- */
 function selfTestCrypto() {
+  requireEditor_();
   var samples = ['1234567890123', 'สมชาย ใจดี', 'test@example.com', '', 'ที่อยู่ 99/1 ต.ในเมือง อ.เมือง จ.บุรีรัมย์'];
   var pass = true, report = [];
   samples.forEach(function (s) {
@@ -212,48 +231,71 @@ function selfTestCrypto() {
 
 /*************************************************************
  * การหมุนกุญแจ (Key rotation) — ใช้เมื่อสงสัยว่ากุญแจรั่วไหล
- * ขั้นตอน : สำรองสเปรดชีต > เรียก rotateEncryptionKey() > ตรวจข้อมูล
+ * ขั้นตอน : สำรองสเปรดชีต > เรียก rotateEncryptionKey() จากตัวแก้ไขสคริปต์ > ตรวจข้อมูล
+ *
+ * ทำงานเป็นชุดและกลับมาทำต่อได้ :
+ *  - กุญแจใหม่ถูกบันทึกเป็น MASTER_KEY_NEXT_B64 ก่อนเขียนข้อมูลใด ๆ (ถอดรหัสได้ทั้งกุญแจเดิมและกุญแจใหม่ระหว่างทาง)
+ *  - AuditLog (ตารางใหญ่สุด) เข้ารหัสใหม่ทีละชุด และจำตำแหน่งไว้ใน ROTATE_LOG_ROW
+ *    ถ้าใกล้ครบเวลา 6 นาที จะหยุดเองและแจ้งให้รันซ้ำ รอบถัดไปทำต่อจากตำแหน่งเดิม
+ *  - Members ทำทั้งตารางในครั้งเดียว (ดัชนีค้นหาต้องเปลี่ยนพร้อมกัน) แล้วสลับกุญแจทันที
  *************************************************************/
+var ROTATE_CFG = { BUDGET_MS: 270000, CHUNK: 2000 };
+
 function rotateEncryptionKey() {
+  requireEditor_();
+  var started = new Date().getTime();
+  var elapsed = function () { return new Date().getTime() - started; };
   return withScriptLock_(function () {
     var props = PropertiesService.getScriptProperties();
     var oldKeyB64 = props.getProperty('MASTER_KEY_B64');
     if (!oldKeyB64) throw new Error('ยังไม่มีกุญแจในระบบ');
 
-    var BAD = ['[ข้อมูลถูกแก้ไข]', '[ถอดรหัสไม่สำเร็จ]'];
-    var col = function (f) { return M_COLS.indexOf(f); };
+    // 1) กุญแจใหม่ : ใช้ของรอบที่ค้างอยู่ (ถ้ามี) ไม่เช่นนั้นสร้างใหม่ แล้วบันทึกไว้ก่อนเขียนข้อมูลใด ๆ
+    var resumed = !!props.getProperty('MASTER_KEY_NEXT_B64');
+    var newKeyB64 = props.getProperty('MASTER_KEY_NEXT_B64') || Utilities.base64Encode(cryptoRandomBytes_(32));
+    if (!resumed) props.setProperties({ MASTER_KEY_NEXT_B64: newKeyB64, ROTATE_LOG_ROW: '2' });
+    cryptoResetCache_();
+    var oldKey = Utilities.base64Decode(oldKeyB64), newKey = Utilities.base64Decode(newKeyB64);
+    // ถอดรหัสด้วยกุญแจหลักปัจจุบัน (สำรองด้วยกุญแจชุดก่อน/กุญแจใหม่) แล้วเข้ารหัสด้วยกุญแจใหม่
+    var useKey = function (k) { cryptoGetMasterKey_._k = k; cryptoSubKey_._c = null; };
 
-    // 1) อ่านทั้งตารางครั้งเดียว แล้วถอดรหัสด้วยกุญแจปัจจุบัน (หรือกุญแจชุดก่อน ถ้าการหมุนครั้งก่อนค้างอยู่)
+    var BAD = ['[ข้อมูลถูกแก้ไข]', '[ถอดรหัสไม่สำเร็จ]'];
+    var failed = 0;
+    // ค่าที่ถอดรหัสไม่ได้คงข้อความเข้ารหัสเดิมไว้ ไม่เขียนทับด้วยข้อความแจ้งเตือน
+    var ok = function (v) { if (BAD.indexOf(v) >= 0) { failed++; return false; } return true; };
+
+    // 2) AuditLog ทีละชุด
+    var lSh = ensureColumns_(sheet_(SHEETS.LOG), LOG_COLS.length);
+    var lCol = LOG_COLS.indexOf('detail_enc') + 1;
+    var lLast = lSh.getLastRow();
+    var cursor = Math.max(2, Number(props.getProperty('ROTATE_LOG_ROW') || 2));
+    while (cursor <= lLast) {
+      if (elapsed() > ROTATE_CFG.BUDGET_MS) return notDone_(cursor, lLast);
+      var n = Math.min(ROTATE_CFG.CHUNK, lLast - cursor + 1);
+      var vals = lSh.getRange(cursor, lCol, n, 1).getValues();
+      useKey(oldKey);
+      var plain = vals.map(function (r) { return decryptField_(cellStr_(r[0])); });
+      useKey(newKey);
+      var out = plain.map(function (v, i) { return [ok(v) ? encryptField_(v) : cellStr_(vals[i][0])]; });
+      lSh.getRange(cursor, lCol, n, 1).setNumberFormat('@').setValues(out);
+      cursor += n;
+      props.setProperty('ROTATE_LOG_ROW', String(cursor));
+    }
+    // เหลือเวลาไม่พอสำหรับทั้งตาราง Members ให้รันรอบใหม่ (จะข้าม AuditLog ที่ทำแล้ว)
+    if (elapsed() > ROTATE_CFG.BUDGET_MS / 2) return notDone_(cursor, lLast);
+
+    // 3) Members ทั้งตาราง
+    var col = function (f) { return M_COLS.indexOf(f); };
     var mSh = ensureColumns_(sheet_(SHEETS.MEMBERS), M_COLS.length);
     var mLast = mSh.getLastRow();
     var mVals = mLast >= 2 ? mSh.getRange(2, 1, mLast - 1, M_COLS.length).getValues() : [];
+    useKey(oldKey);
     var mPlain = mVals.map(function (row) {
       var o = {};
       M_ENCRYPTED.forEach(function (f) { o[f] = decryptField_(cellStr_(row[col(f)])); });
       return o;
     });
-
-    // รายละเอียดใน AuditLog ก็เข้ารหัสด้วยกุญแจเดียวกัน ต้องเข้ารหัสใหม่ด้วย ไม่เช่นนั้นจะอ่านไม่ได้ทั้งหมด
-    var lSh = ensureColumns_(sheet_(SHEETS.LOG), LOG_COLS.length);
-    var lCol = LOG_COLS.indexOf('detail_enc') + 1;
-    var lLast = lSh.getLastRow();
-    var lVals = lLast >= 2 ? lSh.getRange(2, lCol, lLast - 1, 1).getValues() : [];
-    var lPlain = lVals.map(function (r) { return decryptField_(cellStr_(r[0])); });
-
-    // 2) เปลี่ยนกุญแจ (เก็บกุญแจเดิมไว้เป็นชุดก่อน เพื่อให้ข้อมูลที่ยังไม่ถูกเข้ารหัสใหม่อ่านได้)
-    props.setProperties({
-      MASTER_KEY_PREV_B64: oldKeyB64,
-      MASTER_KEY_B64: Utilities.base64Encode(cryptoRandomBytes_(32)),
-      MASTER_KEY_CREATED: new Date().toISOString()
-    });
-    cryptoGetMasterKey_._k = null; cryptoSubKey_._c = null;
-    cryptoPrevSubKey_._c = null; cryptoPrevSubKey_._none = false;
-
-    // 3) เข้ารหัสใหม่ในหน่วยความจำ แล้วเขียนกลับครั้งเดียวต่อตาราง
-    //    (เดิมเขียนทีละช่อง ข้อมูลหลายร้อยรายการจะเกินเวลา 6 นาทีและค้างครึ่งทาง)
-    //    ค่าที่ถอดรหัสไม่ได้คงข้อความเข้ารหัสเดิมไว้ ไม่เขียนทับด้วยข้อความแจ้งเตือน
-    var failed = 0;
-    var ok = function (v) { if (BAD.indexOf(v) >= 0) { failed++; return false; } return true; };
+    useKey(newKey);
     var mOut = mVals.map(function (row, i) {
       var r = row.map(cellStr_);
       var p = mPlain[i];
@@ -269,16 +311,29 @@ function rotateEncryptionKey() {
     });
     if (mOut.length) mSh.getRange(2, 1, mOut.length, M_COLS.length).setNumberFormat('@').setValues(mOut);
 
-    var lOut = lPlain.map(function (v, i) {
-      return [ok(v) ? encryptField_(v) : cellStr_(lVals[i][0])];
+    // 4) เขียนครบแล้วจึงสลับกุญแจ : กุญแจเดิมเก็บเป็นชุดก่อน (แถวที่ถูกเขียนระหว่างหมุนยังอ่านได้)
+    props.setProperties({
+      MASTER_KEY_PREV_B64: oldKeyB64,
+      MASTER_KEY_B64: newKeyB64,
+      MASTER_KEY_CREATED: new Date().toISOString()
     });
-    if (lOut.length) lSh.getRange(2, lCol, lOut.length, 1).setNumberFormat('@').setValues(lOut);
+    props.deleteProperty('MASTER_KEY_NEXT_B64');
+    props.deleteProperty('ROTATE_LOG_ROW');
+    cryptoResetCache_();
 
-    var msg = 'หมุนกุญแจสำเร็จ สมาชิก ' + mOut.length + ' ระเบียน ประวัติ ' + lOut.length + ' รายการ' +
+    var msg = 'หมุนกุญแจสำเร็จ' + (resumed ? ' (ทำต่อจากรอบที่ค้าง)' : '') +
+      ' สมาชิก ' + mOut.length + ' ระเบียน ประวัติ ' + Math.max(lLast - 1, 0) + ' รายการ' +
       (failed ? ' (ถอดรหัสไม่ได้ ' + failed + ' ช่อง คงค่าเดิมไว้)' : '');
     writeLog_({ username: 'ระบบ', role: 'system' }, 'security.key_rotate', 'system', '-', msg,
-      { records: mOut.length, logs: lOut.length, failed: failed });
+      { records: mOut.length, logs: Math.max(lLast - 1, 0), failed: failed, resumed: resumed });
     Logger.log(msg);
     return msg;
   }, 30000);
+}
+
+function notDone_(cursor, last) {
+  var msg = 'หมุนกุญแจยังไม่เสร็จ (ทำประวัติไปแล้วถึงแถว ' + (cursor - 1) + ' จาก ' + last + ') ' +
+    'กรุณารัน rotateEncryptionKey() อีกครั้งเพื่อทำต่อ ระหว่างนี้ระบบยังใช้งานได้ตามปกติ';
+  Logger.log(msg);
+  return msg;
 }

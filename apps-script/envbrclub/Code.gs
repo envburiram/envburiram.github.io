@@ -18,7 +18,13 @@ var APP = {
   PAGE_SIZE: 25,
   CARD_YEARS: 3,               // อายุบัตรสมาชิก (ปี)
   RETENTION_YEARS: 10,         // ระยะเวลาเก็บข้อมูลหลังพ้นสมาชิกภาพ
-  MAX_IMAGE_BYTES: 1500000     // 1.5 MB ต่อรูป (ย่อจากฝั่งผู้ใช้ก่อนส่ง)
+  MAX_IMAGE_BYTES: 1500000,    // 1.5 MB ต่อรูป เมื่อผู้ดูแลอัปโหลด
+  // หน้าสมัครสาธารณะ (ไม่ต้องล็อกอิน) : จำกัดขนาดและจำนวน กันการยิงคำขอจน Drive/สเปรดชีตของเจ้าของเต็ม
+  MAX_PUBLIC_IMAGE_BYTES: 400000,  // หน้าเว็บย่อรูปก่อนส่งอยู่แล้ว ปกติไม่เกิน 200 KB
+  REGISTER_PER_10MIN: 150,     // รองรับการสแกน QR สมัครพร้อมกันในที่ประชุม
+  REGISTER_PER_DAY: 500,       // นับจากตาราง (ใบสมัครผ่านเว็บของวันนี้ เวลาไทย)
+  MAX_PENDING: 1000,           // ใบสมัครรอตรวจสอบค้างได้ไม่เกินนี้
+  LOGIN_FAIL_MIN_MS: 6000      // เข้าสู่ระบบไม่สำเร็จตอบช้าเท่ากันทุกกรณี ไม่ให้เดาชื่อผู้ใช้จากเวลาตอบ
 };
 
 var SHEETS = {
@@ -142,6 +148,44 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+/**
+ * ทุกฟังก์ชันที่ชื่อไม่ลงท้ายด้วย _ ถูกเรียกจากหน้าเว็บผ่าน google.script.run ได้ (รวมถึงคนที่ไม่ได้ล็อกอิน)
+ * และทำงานด้วยสิทธิ์เจ้าของสคริปต์ ฟังก์ชันดูแลระบบที่ตั้งใจให้รันจากตัวแก้ไขสคริปต์จึงต้องเรียกฟังก์ชันนี้ก่อนเสมอ
+ * คนที่เรียกผ่านเว็บจะได้ getActiveUser เป็นค่าว่าง หรือเป็นอีเมลที่ไม่ใช่เจ้าของ จึงถูกปฏิเสธ
+ * (ต้องมี scope userinfo.email ใน appsscript.json)
+ */
+function requireEditor_() {
+  var active = '', owner = '';
+  try {
+    active = Session.getActiveUser().getEmail();
+    owner = Session.getEffectiveUser().getEmail();
+  } catch (e) { /* ไม่มีสิทธิ์อ่านอีเมล ถือว่าไม่ใช่เจ้าของ */ }
+  if (!active || active !== owner) throw new Error('ฟังก์ชันนี้เรียกได้จากตัวแก้ไขสคริปต์โดยเจ้าของระบบเท่านั้น');
+}
+
+/**
+ * ตัวนับอัตราใน CacheService : คืน false เมื่อเกิน limit ครั้งต่อช่วง windowSec วินาที
+ * (นับแบบประมาณ ไม่ atomic แต่พอสำหรับกันการยิงคำขอจำนวนมาก)
+ */
+function rateAllow_(name, limit, windowSec) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var key = 'RATE:' + name + ':' + Math.floor(new Date().getTime() / (windowSec * 1000));
+    var n = Number(cache.get(key) || 0) + 1;
+    cache.put(key, String(n), Math.min(21600, windowSec + 60));
+    return n <= limit;
+  } catch (e) {
+    return true;
+  }
+}
+
+/** ถูกเรียกจาก trigger ของโปรเจกต์นี้จริง (คนภายนอกไม่รู้ triggerUid จึงปลอมไม่ได้) */
+function isOwnTrigger_(e) {
+  var uid = e && e.triggerUid ? String(e.triggerUid) : '';
+  if (!uid) return false;
+  return ScriptApp.getProjectTriggers().some(function (t) { return String(t.getUniqueId()) === uid; });
+}
+
 function getWebAppUrl_() {
   var url = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
   if (url) return url;
@@ -209,10 +253,31 @@ function readTable_(name, cols) {
  */
 function ensureTextRows_(sh, width) {
   var max = sh.getMaxRows();
-  if (sh.getLastRow() + 1 <= max) return;
+  // เหลือแถวว่างอย่างน้อย 1 แถวหลัง append เสมอ (deleteRowSafe_ อาศัยแถวนี้)
+  if (sh.getLastRow() + 2 <= max) return;
   var add = 500;
   sh.insertRowsAfter(max, add);
   sh.getRange(max + 1, 1, add, width).setNumberFormat('@');
+}
+
+/** ลบแถว แต่ถ้าเป็นแถวสุดท้ายที่ไม่ถูกตรึง ให้ล้างค่าแทน (Sheets ไม่ยอมให้ลบแถวที่ไม่ถูกตรึงจนหมด) */
+function deleteRowSafe_(sh, rowIndex) {
+  if (sh.getMaxRows() - sh.getFrozenRows() <= 1) {
+    sh.getRange(rowIndex, 1, 1, sh.getMaxColumns()).clearContent();
+    return;
+  }
+  sh.deleteRow(rowIndex);
+}
+
+/** แก้เฉพาะบางช่องของแถว ไม่เขียนทับทั้งแถวด้วยข้อมูลที่อ่านไว้ก่อน (กันย้อนการแก้ไขของคนอื่น) */
+function updateCells_(name, cols, rowIndex, patch) {
+  var sh = sheet_(name);
+  Object.keys(patch).forEach(function (k) {
+    var c = cols.indexOf(k);
+    if (c < 0) throw new Error('ไม่พบคอลัมน์ ' + k);
+    var v = patch[k] === undefined || patch[k] === null ? '' : patch[k];
+    sh.getRange(rowIndex, c + 1).setNumberFormat('@').setValue(v);
+  });
 }
 
 function appendRow_(name, cols, obj) {
@@ -324,6 +389,7 @@ function apiSaveSettings(token, data) {
  * ติดตั้งระบบ  — เรียกครั้งเดียวจากตัวแก้ไขสคริปต์
  * =======================================================*/
 function setup() {
+  requireEditor_();
   var props = PropertiesService.getScriptProperties();
 
   // 1) สเปรดชีตฐานข้อมูล
@@ -385,7 +451,8 @@ function setup() {
     '\n\nขั้นตอนถัดไป : Deploy > New deployment > Web app ' +
     '(Execute as: Me, Who has access: Anyone) แล้วนำ URL มาใส่ที่ Script Property ชื่อ WEBAPP_URL';
   Logger.log(out);
-  return out;
+  // รหัสผ่านแสดงเฉพาะใน Execution log ไม่ส่งกลับเป็นค่าของฟังก์ชัน
+  return 'ติดตั้งเรียบร้อย ดูรายละเอียดใน Execution log';
 }
 
 function ensureSheet_(s, name, cols) {
@@ -393,6 +460,8 @@ function ensureSheet_(s, name, cols) {
   var created = false;
   if (!sh) { sh = s.insertSheet(name); created = true; }
 
+  // ชีตใหม่มี 26 คอลัมน์ ตัดคอลัมน์ที่ไม่ใช้ทิ้ง เพราะเซลล์ว่างก็นับรวมในเพดาน 10 ล้านเซลล์ของสเปรดชีต
+  if (created && sh.getMaxColumns() > cols.length) sh.deleteColumns(cols.length + 1, sh.getMaxColumns() - cols.length);
   ensureColumns_(sh, cols.length);   // ต้องทำก่อนแตะแถวหัวตารางเสมอ
 
   var head = sh.getRange(1, 1, 1, cols.length).getValues()[0];
@@ -415,6 +484,7 @@ function ensureSheet_(s, name, cols) {
  * รายงานว่าตารางไหนผิดปกติ และซ่อมโครงสร้างให้อัตโนมัติโดยไม่แตะข้อมูลเดิม
  */
 function diagnose() {
+  requireEditor_();
   var props = PropertiesService.getScriptProperties();
   var out = ['ผลตรวจระบบ ' + now_(), ''];
   var problems = 0;
@@ -492,7 +562,9 @@ function ensureTrigger_(fn, hour) {
 }
 
 /** งานประจำวัน : ปรับสถานะบัตรหมดอายุ, ล้างเซสชันหมดอายุ, ล้างไฟล์ส่งออกเก่า */
-function dailyMaintenance() {
+function dailyMaintenance(e) {
+  // รันได้จาก trigger รายวันของระบบ หรือจากตัวแก้ไขสคริปต์เท่านั้น
+  if (!isOwnTrigger_(e)) requireEditor_();
   var today = fmtDate_(new Date());
   var sh = sheet_(SHEETS.MEMBERS);
   var idxStatus = M_COLS.indexOf('status') + 1;

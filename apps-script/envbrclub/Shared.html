@@ -263,10 +263,12 @@ function SignaturePad(canvas){
   ['mousemove','touchmove'].forEach(function(ev){ canvas.addEventListener(ev,move,{passive:false}); });
   ['mouseup','mouseleave','touchend','touchcancel'].forEach(function(ev){ canvas.addEventListener(ev,end); });
   resize();
+  /* canvas ขนาด 0 (ตอนถูกซ่อน) วาดไม่ได้ และ toDataURL จะได้ 'data:,' จึงถือว่ายังไม่มีลายเซ็น */
+  function usable(){ return canvas.width > 0 && canvas.height > 0; }
   return {
     clear:function(){ resize(); dirty=false; },
-    isEmpty:function(){ return !dirty; },
-    toDataURL:function(){ return dirty ? canvas.toDataURL('image/png') : ''; }
+    isEmpty:function(){ return !dirty || !usable(); },
+    toDataURL:function(){ return dirty && usable() ? canvas.toDataURL('image/png') : ''; }
   };
 }
 

@@ -108,7 +108,7 @@
       <label class="check" style="color:#fff;font-size:.85rem;align-items:center">
         <input type="checkbox" id="a4mode"> <span>พิมพ์ลงกระดาษ A4</span>
       </label>
-      <button class="btn-ghost" onclick="window.close()">ปิดหน้าต่าง</button>
+      <button class="btn-ghost" id="closeBtn">ปิดหน้าต่าง</button>
       <button id="printBtn">พิมพ์ / บันทึกเป็น PDF</button>
     </div>
   </div>
@@ -179,16 +179,17 @@
   </div>
 </div>
 
-<!-- integrity : ถ้าไฟล์บน CDN ถูกแก้ไข เบราว์เซอร์จะไม่รัน (แล้วระบบสลับไปใช้บริการสำรองสร้าง QR แทน) -->
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
-  integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"
-  crossorigin="anonymous"></script>
+<?!= include('QRLib') ?>
 <script>
 var PT = <?!= jsonForScript_(PARAMS.pt || '') ?>;
 var DATA = null;
 
 document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('printBtn').addEventListener('click', function(){ window.print(); });
+  /* หน้านี้อยู่ใน iframe ของ Apps Script ต้องปิดหน้าต่างชั้นนอก (window.close() ของ iframe ไม่มีผล) */
+  document.getElementById('closeBtn').addEventListener('click', function(){
+    try{ window.top.close(); }catch(e){}
+  });
   document.getElementById('a4mode').addEventListener('change', function(e){
     document.body.classList.toggle('a4', e.target.checked);
     document.getElementById('pageStyle').textContent = e.target.checked
@@ -271,15 +272,11 @@ function makeQR(url){
   box.innerHTML = '';
   try{
     new QRCode(box, {text:url, width:260, height:260, correctLevel: QRCode.CorrectLevel.M});
-  }catch(e){}
-  setTimeout(function(){
-    if(!box.querySelector('img') && !box.querySelector('canvas')){
-      var img = document.createElement('img');
-      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=0&data=' + encodeURIComponent(url);
-      img.alt = 'คิวอาร์โค้ดตรวจสอบสมาชิก';
-      box.appendChild(img);
-    }
-  }, 900);
+  }catch(e){
+    /* ไม่ส่ง URL ตรวจสอบบัตรไปให้บริการสร้าง QR ภายนอก เพราะมีรหัสตรวจสอบของสมาชิก */
+    box.textContent = 'สร้างคิวอาร์โค้ดไม่สำเร็จ';
+    fail('สร้างคิวอาร์โค้ดไม่สำเร็จ กรุณาโหลดหน้านี้ใหม่จากหน้าผู้ดูแล');
+  }
 }
 </script>
 </body>

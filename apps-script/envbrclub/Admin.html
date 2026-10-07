@@ -167,6 +167,8 @@
             <div class="field"><label for="xstatus">สถานะสมาชิก</label>
               <select id="xstatus"><option value="">ทั้งหมด</option></select></div>
             <div class="field"><label for="xq">คำค้น</label><input id="xq" placeholder="เว้นว่างเพื่อส่งออกทั้งหมด"></div>
+            <div class="field"><label for="xfrom">ประวัติตั้งแต่วันที่ (เฉพาะชุดประวัติ)</label><input id="xfrom" type="date"></div>
+            <div class="field"><label for="xto">ถึงวันที่</label><input id="xto" type="date"></div>
           </div>
           <label class="check su-only" style="margin-top:16px">
             <input type="checkbox" id="xfull">
@@ -226,6 +228,7 @@
     <div class="btn-row" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:16px;margin-top:16px">
       <div class="btn-row">
         <button class="btn-ghost" id="printBtn">พิมพ์บัตรสมาชิก</button>
+        <a class="btn btn-ghost btn-sm hidden" id="printLink" target="_blank" rel="noopener">เปิดหน้าพิมพ์บัตร</a>
         <button class="btn-danger btn-sm" id="delBtn">ลบสมาชิก</button>
       </div>
       <div class="btn-row">
@@ -247,7 +250,9 @@
         <span class="help">อย่างน้อย 10 ตัวอักษร ประกอบด้วยตัวอักษรและตัวเลข</span></div>
       <div class="field"><label for="n2">ยืนยันรหัสผ่านใหม่</label><input id="n2" type="password" autocomplete="new-password"></div>
     </div>
-    <div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button id="pwSave">บันทึกรหัสผ่านใหม่</button></div>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn-ghost hidden" id="pwLogout">ออกจากระบบ</button>
+      <button id="pwSave">บันทึกรหัสผ่านใหม่</button></div>
   </div>
 </div>
 
@@ -273,6 +278,7 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('outBtn').addEventListener('click', doLogout);
   document.getElementById('pwBtn').addEventListener('click', function(){ openModal('pwModal'); });
   document.getElementById('pwSave').addEventListener('click', savePassword);
+  document.getElementById('pwLogout').addEventListener('click', doLogout);
   document.querySelectorAll('[data-close]').forEach(function(b){
     b.addEventListener('click', function(){ closeModal(b.dataset.close); });
   });
@@ -318,7 +324,9 @@ document.addEventListener('DOMContentLoaded', function(){
 function showLogin(){
   TOKEN=''; sessionStorage.removeItem('br_token');
   releasePw();
-  closeModal('pwModal');
+  closeModal('pwModal'); closeModal('editModal');
+  /* ไม่ทิ้งรหัสผ่านที่พิมพ์ค้างไว้ให้ผู้ใช้คนถัดไปของแท็บนี้ */
+  ['p','op','n1','n2'].forEach(function(i){ document.getElementById(i).value=''; });
   document.getElementById('loginView').classList.remove('hidden');
   document.getElementById('appView').classList.add('hidden');
 }
@@ -327,12 +335,14 @@ function forcePw(){
   FORCE_PW = true;
   document.getElementById('pwForce').classList.remove('hidden');
   document.querySelector('#pwModal .x').classList.add('hidden');
+  document.getElementById('pwLogout').classList.remove('hidden');
   openModal('pwModal');
 }
 function releasePw(){
   FORCE_PW = false;
   document.getElementById('pwForce').classList.add('hidden');
   document.querySelector('#pwModal .x').classList.remove('hidden');
+  document.getElementById('pwLogout').classList.add('hidden');
 }
 function doLogin(e){
   e.preventDefault();
@@ -348,7 +358,7 @@ function doLogin(e){
     }).catch(function(err){ b.disabled=false; b.textContent='เข้าสู่ระบบ'; toast(errText(err), true); });
 }
 function doLogout(){
-  call('apiLogout', TOKEN).then(function(){ showLogin(); toast('ออกจากระบบแล้ว'); });
+  call('apiLogout', TOKEN).then(function(){ showLogin(); toast('ออกจากระบบแล้ว'); }).catch(showLogin);
 }
 function startApp(){
   document.getElementById('loginView').classList.add('hidden');
@@ -545,6 +555,9 @@ function collectForm(containerId, p){
 
 /* ---------------- เปิด/บันทึกสมาชิก ---------------- */
 function openMember(id){
+  /* ลิงก์พิมพ์บัตรสำรองเป็นของสมาชิกคนก่อน ต้องซ่อนทุกครั้งที่เปิดคนใหม่ */
+  var pl = document.getElementById('printLink');
+  pl.classList.add('hidden'); pl.removeAttribute('href');
   loading(true);
   call('apiGetMember', TOKEN, id).then(function(r){
     loading(false);
@@ -599,13 +612,19 @@ function deleteMember(){
 }
 function printCard(){
   if(!CURRENT) return;
+  /* เปิดหน้าต่างทันทีตอนกดปุ่ม (ถ้ารอให้ server ตอบก่อน เบราว์เซอร์จะบล็อก pop-up) แล้วค่อยใส่ลิงก์ */
+  var w = window.open('', '_blank');
+  if(w){ try{ w.document.title = 'บัตรสมาชิก'; w.document.body.textContent = 'กำลังเตรียมบัตรสมาชิก…'; }catch(e){} }
+  document.getElementById('printLink').classList.add('hidden');
   loading(true);
   call('apiIssuePrintToken', TOKEN, CURRENT.id, clientInfo()).then(function(r){
     loading(false);
-    if(!r.ok) return toast(r.error, true);
-    var w = window.open(r.url, '_blank');
-    if(!w) toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต pop-up แล้วลองอีกครั้ง', true);
-  }).catch(handleErr);
+    if(!r.ok){ if(w) w.close(); return toast(r.error, true); }
+    if(w){ w.location.href = r.url; return; }
+    var a = document.getElementById('printLink');
+    if(/^https:\/\//.test(r.url)){ a.href = r.url; a.classList.remove('hidden'); }
+    toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ กดลิงก์ "เปิดหน้าพิมพ์บัตร" แทน', true);
+  }).catch(function(e){ if(w) w.close(); handleErr(e); });
 }
 
 /* ---------------- ประวัติ ---------------- */
@@ -634,6 +653,8 @@ function loadLogs(){
         var chg = '';
         if(x.detail && x.detail.changes && x.detail.changes.length){
           chg = '<div class="chg">' + x.detail.changes.map(function(c){
+            /* admin.update เก็บเป็นข้อความสรุป ส่วน member.update เก็บเป็น {label, from, to} */
+            if(typeof c === 'string') return esc(c);
             return esc(c.label)+': <code>'+esc(c.from)+'</code> → <code>'+esc(c.to)+'</code>';
           }).join('<br>') + '</div>';
         }
@@ -658,8 +679,8 @@ function doExport(fn){
     status: document.getElementById('xstatus').value,
     q: document.getElementById('xq').value,
     includeNationalId: document.getElementById('xfull').checked,
-    dateFrom: document.getElementById('lfrom').value,
-    dateTo: document.getElementById('lto').value
+    dateFrom: document.getElementById('xfrom').value,
+    dateTo: document.getElementById('xto').value
   };
   loading(true);
   call(fn, TOKEN, opt, clientInfo()).then(function(r){
@@ -744,8 +765,12 @@ function loadSettings(){
   }).catch(handleErr);
 }
 function saveSettings(){
-  var d = {};
-  Object.keys(SET_LABELS).forEach(function(k){ d[k] = document.getElementById('s_'+k).value; });
+  var d = {}, missing = false;
+  Object.keys(SET_LABELS).forEach(function(k){
+    var el = document.getElementById('s_'+k);
+    if(el) d[k] = el.value; else missing = true;
+  });
+  if(missing) return toast('ยังโหลดการตั้งค่าไม่เสร็จ กรุณารอสักครู่แล้วลองใหม่', true);
   call('apiSaveSettings', TOKEN, d).then(function(r){
     toast(r.ok?'บันทึกการตั้งค่าแล้ว':r.error, !r.ok);
   }).catch(handleErr);

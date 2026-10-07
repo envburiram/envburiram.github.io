@@ -149,7 +149,7 @@
           <div style="margin-top:8px" class="btn-row">
             <input type="file" id="signFile" accept="image/*" style="font-size:.85rem">
           </div>
-          <details style="margin-top:10px">
+          <details id="padBox" style="margin-top:10px">
             <summary style="cursor:pointer;font-size:.88rem;color:var(--green)">หรือเซ็นบนหน้าจอ</summary>
             <div class="pad-wrap" style="margin-top:8px">
               <canvas id="pad" class="pad" width="320" height="110" style="width:320px;height:110px"></canvas>
@@ -190,7 +190,7 @@
     <div class="code" id="doneCode"></div>
     <p style="margin:0 auto 18px">สถานะปัจจุบัน <b>รอตรวจสอบ</b> เจ้าหน้าที่จะตรวจสอบข้อมูลและออกบัตรสมาชิกให้ภายหลัง
       กรุณาบันทึกเลขสมาชิกไว้เพื่อใช้ติดต่อสอบถาม</p>
-    <button class="btn-ghost" onclick="location.reload()">สมัครรายถัดไป</button>
+    <button type="button" class="btn-ghost" id="nextBtn">สมัครรายถัดไป</button>
   </div>
 </div>
 
@@ -234,10 +234,30 @@ document.addEventListener('DOMContentLoaded', function(){
     signData = pad.toDataURL(); setThumb('signThumb', signData, 'contain'); toast('บันทึกลายเซ็นแล้ว');
   });
   document.getElementById('resetBtn').addEventListener('click', function(){
-    if(confirm('ล้างข้อมูลทั้งหมดในแบบฟอร์ม?')) location.reload();
+    if(confirm('ล้างข้อมูลทั้งหมดในแบบฟอร์ม?')) resetForm();
+  });
+  document.getElementById('nextBtn').addEventListener('click', resetForm);
+  /* canvas ใน <details> ที่ปิดอยู่อาจวัดขนาดได้ 0 (Safari รุ่นเก่า) จึงตั้งขนาดใหม่ทุกครั้งที่เปิด */
+  document.getElementById('padBox').addEventListener('toggle', function(e){
+    if(e.target.open) pad.clear();
   });
   document.getElementById('form').addEventListener('submit', submit);
 });
+
+/* เริ่มฟอร์มใหม่ในหน้าเดิม : location.reload() ใน iframe ของ Apps Script จะได้หน้าขาว */
+function resetForm(){
+  var f = document.getElementById('form');
+  /* แสดงฟอร์มก่อน แล้วจึงล้างแผ่นเซ็น : ถ้าฟอร์มยังซ่อนอยู่ canvas จะวัดขนาดได้ 0 แล้วเซ็นไม่ได้ */
+  document.getElementById('done').classList.add('hidden');
+  f.classList.remove('hidden');
+  f.reset();
+  photoData = ''; signData = '';
+  document.getElementById('photoThumb').innerHTML = '<span>รูปถ่าย<br>ขนาด 1 นิ้ว</span>';
+  document.getElementById('signThumb').innerHTML = '<span>ลายเซ็น</span>';
+  pad.clear();
+  onNid({ target: document.getElementById('national_id') });
+  window.scrollTo(0,0);
+}
 
 function fill(id, arr, def){
   var s = document.getElementById(id);

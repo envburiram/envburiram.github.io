@@ -22,7 +22,8 @@
 6. Deploy > New deployment > Web app ตั้ง Execute as: **Me** และ Who has access: **Anyone**
 7. LINE Developers Console > Messaging API > Webhook URL ใส่ URL ของ Web app ต่อท้ายด้วย `?key=...` จากข้อ 4
    เช่น `https://script.google.com/macros/s/xxxx/exec?key=yyyy` แล้วกด Verify
-8. ทดสอบโดยส่งไฟล์เข้าแชต (Verify ผ่านไม่ได้แปลว่า key ถูก) ถ้าบอทไม่ตอบ ให้ดู log ที่หน้า Executions
+8. ทดสอบโดยส่งไฟล์เข้าแชต (Verify ผ่านไม่ได้แปลว่า key ถูก เพราะระบบตอบ 200 เหมือนกันทุกกรณี) ถ้าบอทไม่ตอบ ให้ดู log ที่หน้า Executions
+   หมายเหตุ: `doPost` ตอบด้วย HtmlService เพราะคำตอบแบบ ContentService ถูก redirect (302) ซึ่ง LINE นับเป็น error
    ถ้าเห็น `ปฏิเสธคำขอที่ไม่มี key หรือ key ไม่ถูกต้อง` แสดงว่า `?key=` ใน Webhook URL ไม่ตรง
 
 ทุกครั้งที่แก้โค้ด ต้อง Deploy > Manage deployments > แก้ deployment เดิม > Version: **New version**

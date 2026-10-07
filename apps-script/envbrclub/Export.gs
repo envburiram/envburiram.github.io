@@ -73,7 +73,8 @@ function buildLogRows_(opt) {
     var d = {};
     try { d = JSON.parse(decryptField_(r.detail_enc) || '{}'); } catch (e) { }
     var changes = (d.changes || []).map(function (c) {
-      return c.label + ': ' + c.from + ' → ' + c.to;
+      // admin.update เก็บเป็นข้อความสรุป ส่วน member.update เก็บเป็น {label, from, to}
+      return typeof c === 'string' ? c : c.label + ': ' + c.from + ' → ' + c.to;
     }).join(' | ');
     return [r.ts, r.actor, r.role, ACTION_LABELS[r.action] || r.action,
       r.target_type, r.target_id, r.summary, changes];
@@ -115,6 +116,9 @@ function apiExportExcel(token, opt, client) {
       .setFontColor(built.full ? '#b00020' : '#555555');
 
     var startRow = 5;
+    // ชีตใหม่มี 1000 แถว ข้อมูลเกินราว 995 รายการจะเขียนไม่ได้ ต้องเพิ่มแถวก่อน
+    var needRows = startRow + built.data.length;
+    if (sh.getMaxRows() < needRows) sh.insertRowsAfter(sh.getMaxRows(), needRows - sh.getMaxRows());
     sh.getRange(startRow, 1, 1, built.header.length).setValues([built.header])
       .setFontWeight('bold').setBackground('#0e5b4e').setFontColor('#ffffff');
     if (built.data.length) {
@@ -148,8 +152,28 @@ function apiExportExcel(token, opt, client) {
       data: Utilities.base64Encode(bytes)
     };
   } finally {
-    try { DriveApp.getFileById(tmpId).setTrashed(true); } catch (e) { }
+    deleteFilePermanently_(tmpId);
   }
+}
+
+/**
+ * ลบไฟล์ชั่วคราวถาวร (ไม่ค้างในถังขยะ 30 วัน เพราะอาจมีเลขบัตรประชาชนแบบเต็ม)
+ * ใช้ Drive API ผ่าน UrlFetchApp ถ้าไม่สำเร็จจึงย้ายไปถังขยะแทน
+ */
+function deleteFilePermanently_(fileId) {
+  try {
+    var resp = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId), {
+      method: 'delete',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    var code = resp.getResponseCode();
+    if (code === 204 || code === 200 || code === 404) return;
+    console.error('ลบไฟล์ชั่วคราว ' + fileId + ' ไม่สำเร็จ HTTP ' + code + ' ย้ายไปถังขยะแทน');
+  } catch (e) {
+    console.error('ลบไฟล์ชั่วคราว ' + fileId + ' ไม่สำเร็จ: ' + e.message);
+  }
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e2) { }
 }
 
 /** ส่งออก CSV (เปิดใน Excel ได้ ใส่ BOM ให้ภาษาไทยไม่เพี้ยน) */

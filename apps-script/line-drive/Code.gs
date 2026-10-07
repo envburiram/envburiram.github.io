@@ -40,7 +40,7 @@ function doPost(e) {
     // Apps Script อ่าน header X-Line-Signature ไม่ได้ จึงใช้รหัสลับใน URL ยืนยันว่าคำขอมาจาก LINE แทน
     if (!safeEqual_(e && e.parameter && e.parameter.key, config.webhookKey)) {
       console.warn("ปฏิเสธคำขอที่ไม่มี key หรือ key ไม่ถูกต้อง")
-      return jsonOutput_({ content: "forbidden" })
+      return webhookResponse_()
     }
 
     const body = JSON.parse((e.postData && e.postData.contents) || "{}")
@@ -58,7 +58,7 @@ function doPost(e) {
   catch (error) {
     console.error("doPost: " + (error && error.stack ? error.stack : error))
   }
-  return jsonOutput_({ content: "post ok" })
+  return webhookResponse_()
 }
 
 function doGet() {
@@ -194,6 +194,13 @@ function safeEqual_(actual, expected) {
   let diff = a.length ^ b.length
   for (let i = 0; i < b.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
   return b.length > 0 && diff === 0
+}
+
+// ตอบ LINE ด้วย HtmlService : ContentService ถูก redirect (302) ไป script.googleusercontent.com
+// ซึ่ง LINE ไม่ตาม redirect จึงนับทุก webhook ว่าล้มเหลว (ปุ่ม Verify ขึ้น error และอาจถูกส่งซ้ำ)
+// ตอบเหมือนกันทั้งกรณีผ่านและไม่ผ่าน key เพื่อไม่บอกใบ้คนที่สุ่ม key
+function webhookResponse_() {
+  return HtmlService.createHtmlOutput("ok")
 }
 
 function jsonOutput_(value) {

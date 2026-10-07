@@ -23,6 +23,7 @@ var ACTION_LABELS = {
   'export.excel': 'ส่งออกไฟล์ Excel', 'export.csv': 'ส่งออกไฟล์ CSV',
   'admin.create': 'เพิ่มบัญชีผู้ดูแล', 'admin.update': 'แก้ไขบัญชีผู้ดูแล', 'admin.reset_pw': 'ตั้งรหัสผ่านใหม่',
   'settings.update': 'แก้ไขการตั้งค่า', 'security.key_rotate': 'หมุนกุญแจเข้ารหัส',
+  'security.log_throttled': 'งดบันทึกคำขอสาธารณะชั่วคราว', 'security.register_limited': 'จำกัดการรับสมัครชั่วคราว',
   'consent.withdraw': 'ถอนความยินยอม'
 };
 
@@ -65,6 +66,29 @@ function writeLog_(actor, action, tType, tId, summary, detail, client) {
   } catch (e) {
     // ห้ามให้การเขียน log ล้มเหลวไปกระทบธุรกรรมหลัก แต่ต้องเห็นใน execution log
     console.error('เขียนบันทึกประวัติไม่สำเร็จ: ' + e.message);
+  }
+}
+
+/**
+ * จำกัดจำนวนบันทึกจากคำขอที่ไม่ต้องล็อกอิน (เข้าสู่ระบบไม่สำเร็จ, สแกน QR) ไม่เกิน PUBLIC_LOG_LIMIT ต่อ 10 นาทีต่อประเภท
+ * กันคนภายนอกยิงคำขอซ้ำ ๆ จน AuditLog ใหญ่ชนเพดาน 10 ล้านเซลล์ของสเปรดชีต
+ * เมื่อเกินจะบันทึกแถวแจ้งเตือน 1 แถวต่อรอบ แล้วข้ามการบันทึกจนหมดรอบ (คำขอยังทำงานตามปกติ)
+ */
+var PUBLIC_LOG_LIMIT = 60;
+function allowPublicLog_(kind, limit) {
+  limit = limit || PUBLIC_LOG_LIMIT;
+  try {
+    var cache = CacheService.getScriptCache();
+    var key = 'PLOG:' + kind + ':' + Math.floor(new Date().getTime() / 600000);
+    var n = Number(cache.get(key) || 0) + 1;
+    cache.put(key, String(n), 900);
+    if (n === limit + 1) {
+      writeLog_({ username: 'ระบบ', role: 'system' }, 'security.log_throttled', 'system', String(kind).substring(0, 80),
+        'คำขอสาธารณะประเภท ' + kind + ' เกิน ' + limit + ' ครั้งใน 10 นาที งดบันทึกรายการจนหมดรอบ', { kind: kind });
+    }
+    return n <= limit;
+  } catch (e) {
+    return true;
   }
 }
 

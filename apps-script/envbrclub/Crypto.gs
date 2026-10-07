@@ -16,11 +16,20 @@
 var CRYPTO_CFG = { VERSION: 'v1', IV_LEN: 16, TAG_LEN: 16, PBKDF2_ITER: 12000 };
 
 /* ---------- กุญแจ ---------- */
-function cryptoGetMasterKey_() {
+/**
+ * สร้างกุญแจใหม่เฉพาะตอน setup() เท่านั้น
+ * ถ้ากุญแจหายไปภายหลัง (เช่นมีคนลบ Script Property) ต้องหยุดทำงาน ไม่สร้างกุญแจใหม่เงียบ ๆ
+ * เพราะข้อมูลเดิมจะถอดรหัสไม่ได้ และข้อมูลใหม่จะปนกับกุญแจคนละชุด
+ */
+function cryptoGetMasterKey_(createIfMissing) {
   if (cryptoGetMasterKey_._k) return cryptoGetMasterKey_._k;
   var props = PropertiesService.getScriptProperties();
   var b64 = props.getProperty('MASTER_KEY_B64');
   if (!b64) {
+    if (!createIfMissing) {
+      throw new Error('ไม่พบกุญแจเข้ารหัส (MASTER_KEY_B64) — ถ้าเพิ่งติดตั้งให้เรียก setup() ' +
+        'ถ้าเคยใช้งานแล้วให้นำค่าที่สำรองไว้กลับมาใส่ใน Script Properties');
+    }
     b64 = Utilities.base64Encode(cryptoRandomBytes_(32));
     props.setProperty('MASTER_KEY_B64', b64);
     props.setProperty('MASTER_KEY_CREATED', new Date().toISOString());
@@ -33,6 +42,17 @@ function cryptoSubKey_(label) {
   var c = cryptoSubKey_._c || (cryptoSubKey_._c = {});
   if (c[label]) return c[label];
   c[label] = Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|' + label), cryptoGetMasterKey_());
+  return c[label];
+}
+
+/** กุญแจย่อยจากกุญแจชุดก่อน (หลังหมุนกุญแจ) ใช้ถอดรหัสข้อมูลที่ยังไม่ถูกเข้ารหัสใหม่ — ไม่มีคืน null */
+function cryptoPrevSubKey_(label) {
+  if (cryptoPrevSubKey_._none) return null;
+  var c = cryptoPrevSubKey_._c || (cryptoPrevSubKey_._c = {});
+  if (c[label]) return c[label];
+  var b64 = PropertiesService.getScriptProperties().getProperty('MASTER_KEY_PREV_B64');
+  if (!b64) { cryptoPrevSubKey_._none = true; return null; }
+  c[label] = Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|' + label), Utilities.base64Decode(b64));
   return c[label];
 }
 
@@ -100,8 +120,14 @@ function decryptField_(cipher) {
     var ct = Utilities.base64Decode(parts[2]);
     var tag = Utilities.base64Decode(parts[3]);
     var expect = Utilities.computeHmacSha256Signature(iv.concat(ct), cryptoSubKey_('mac')).slice(0, CRYPTO_CFG.TAG_LEN);
-    if (!constEq_(tag, expect)) return '[ข้อมูลถูกแก้ไข]';
-    return bytesStr_(xorBytes_(ct, keystream_(cryptoSubKey_('enc'), iv, ct.length)));
+    if (constEq_(tag, expect)) return bytesStr_(xorBytes_(ct, keystream_(cryptoSubKey_('enc'), iv, ct.length)));
+    // ข้อมูลที่ยังเข้ารหัสด้วยกุญแจชุดก่อน (เช่นการหมุนกุญแจถูกขัดจังหวะ) ยังอ่านได้
+    var prevMac = cryptoPrevSubKey_('mac');
+    if (prevMac) {
+      var expectPrev = Utilities.computeHmacSha256Signature(iv.concat(ct), prevMac).slice(0, CRYPTO_CFG.TAG_LEN);
+      if (constEq_(tag, expectPrev)) return bytesStr_(xorBytes_(ct, keystream_(cryptoPrevSubKey_('enc'), iv, ct.length)));
+    }
+    return '[ข้อมูลถูกแก้ไข]';
   } catch (e) {
     return '[ถอดรหัสไม่สำเร็จ]';
   }
@@ -189,43 +215,70 @@ function selfTestCrypto() {
  * ขั้นตอน : สำรองสเปรดชีต > เรียก rotateEncryptionKey() > ตรวจข้อมูล
  *************************************************************/
 function rotateEncryptionKey() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('ระบบกำลังทำงานอื่นอยู่ ลองใหม่อีกครั้ง');
-  try {
+  return withScriptLock_(function () {
     var props = PropertiesService.getScriptProperties();
     var oldKeyB64 = props.getProperty('MASTER_KEY_B64');
     if (!oldKeyB64) throw new Error('ยังไม่มีกุญแจในระบบ');
 
-    // 1) อ่านและถอดรหัสด้วยกุญแจเดิม
-    var rows = readTable_(SHEETS.MEMBERS, M_COLS);
-    var plain = rows.map(function (r) {
-      var o = { _row: r._row };
-      M_ENCRYPTED.forEach(function (f) { o[f] = decryptField_(r[f]); });
+    var BAD = ['[ข้อมูลถูกแก้ไข]', '[ถอดรหัสไม่สำเร็จ]'];
+    var col = function (f) { return M_COLS.indexOf(f); };
+
+    // 1) อ่านทั้งตารางครั้งเดียว แล้วถอดรหัสด้วยกุญแจปัจจุบัน (หรือกุญแจชุดก่อน ถ้าการหมุนครั้งก่อนค้างอยู่)
+    var mSh = ensureColumns_(sheet_(SHEETS.MEMBERS), M_COLS.length);
+    var mLast = mSh.getLastRow();
+    var mVals = mLast >= 2 ? mSh.getRange(2, 1, mLast - 1, M_COLS.length).getValues() : [];
+    var mPlain = mVals.map(function (row) {
+      var o = {};
+      M_ENCRYPTED.forEach(function (f) { o[f] = decryptField_(cellStr_(row[col(f)])); });
       return o;
     });
 
-    // 2) เปลี่ยนกุญแจ
-    props.setProperty('MASTER_KEY_PREV_B64', oldKeyB64);
-    props.setProperty('MASTER_KEY_B64', Utilities.base64Encode(cryptoRandomBytes_(32)));
-    props.setProperty('MASTER_KEY_CREATED', new Date().toISOString());
-    cryptoGetMasterKey_._k = null; cryptoSubKey_._c = null;
+    // รายละเอียดใน AuditLog ก็เข้ารหัสด้วยกุญแจเดียวกัน ต้องเข้ารหัสใหม่ด้วย ไม่เช่นนั้นจะอ่านไม่ได้ทั้งหมด
+    var lSh = ensureColumns_(sheet_(SHEETS.LOG), LOG_COLS.length);
+    var lCol = LOG_COLS.indexOf('detail_enc') + 1;
+    var lLast = lSh.getLastRow();
+    var lVals = lLast >= 2 ? lSh.getRange(2, lCol, lLast - 1, 1).getValues() : [];
+    var lPlain = lVals.map(function (r) { return decryptField_(cellStr_(r[0])); });
 
-    // 3) เข้ารหัสใหม่ทั้งหมด
-    var sh = sheet_(SHEETS.MEMBERS);
-    plain.forEach(function (p) {
-      M_ENCRYPTED.forEach(function (f) {
-        sh.getRange(p._row, M_COLS.indexOf(f) + 1).setValue(encryptField_(p[f]));
-      });
-      // blind index ต้องคำนวณใหม่ด้วยเพราะกุญแจ idx เปลี่ยน
-      sh.getRange(p._row, M_COLS.indexOf('nid_idx') + 1).setValue(blindIndex_('nid', p.national_id));
-      sh.getRange(p._row, M_COLS.indexOf('phone_idx') + 1).setValue(blindIndex_('phone', p.phone));
-      sh.getRange(p._row, M_COLS.indexOf('email_idx') + 1).setValue(blindIndex_('email', p.email));
+    // 2) เปลี่ยนกุญแจ (เก็บกุญแจเดิมไว้เป็นชุดก่อน เพื่อให้ข้อมูลที่ยังไม่ถูกเข้ารหัสใหม่อ่านได้)
+    props.setProperties({
+      MASTER_KEY_PREV_B64: oldKeyB64,
+      MASTER_KEY_B64: Utilities.base64Encode(cryptoRandomBytes_(32)),
+      MASTER_KEY_CREATED: new Date().toISOString()
     });
+    cryptoGetMasterKey_._k = null; cryptoSubKey_._c = null;
+    cryptoPrevSubKey_._c = null; cryptoPrevSubKey_._none = false;
 
-    writeLog_({ username: 'ระบบ', role: 'system' }, 'security.key_rotate', 'system', '-',
-      'หมุนกุญแจเข้ารหัสฐานข้อมูล (' + plain.length + ' ระเบียน)', { records: plain.length });
-    return 'หมุนกุญแจสำเร็จ ' + plain.length + ' ระเบียน';
-  } finally {
-    lock.releaseLock();
-  }
+    // 3) เข้ารหัสใหม่ในหน่วยความจำ แล้วเขียนกลับครั้งเดียวต่อตาราง
+    //    (เดิมเขียนทีละช่อง ข้อมูลหลายร้อยรายการจะเกินเวลา 6 นาทีและค้างครึ่งทาง)
+    //    ค่าที่ถอดรหัสไม่ได้คงข้อความเข้ารหัสเดิมไว้ ไม่เขียนทับด้วยข้อความแจ้งเตือน
+    var failed = 0;
+    var ok = function (v) { if (BAD.indexOf(v) >= 0) { failed++; return false; } return true; };
+    var mOut = mVals.map(function (row, i) {
+      var r = row.map(cellStr_);
+      var p = mPlain[i];
+      M_ENCRYPTED.forEach(function (f) { if (ok(p[f])) r[col(f)] = encryptField_(p[f]); });
+      // blind index ต้องคำนวณใหม่ด้วยเพราะกุญแจ idx เปลี่ยน
+      if (BAD.indexOf(p.national_id) < 0) r[col('nid_idx')] = blindIndex_('nid', p.national_id);
+      if (BAD.indexOf(p.phone) < 0) r[col('phone_idx')] = blindIndex_('phone', p.phone);
+      if (BAD.indexOf(p.email) < 0) r[col('email_idx')] = blindIndex_('email', p.email);
+      if (BAD.indexOf(p.first_name) < 0 && BAD.indexOf(p.last_name) < 0) {
+        r[col('name_idx')] = blindIndex_('name', String(p.first_name || '') + ' ' + String(p.last_name || ''));
+      }
+      return r;
+    });
+    if (mOut.length) mSh.getRange(2, 1, mOut.length, M_COLS.length).setNumberFormat('@').setValues(mOut);
+
+    var lOut = lPlain.map(function (v, i) {
+      return [ok(v) ? encryptField_(v) : cellStr_(lVals[i][0])];
+    });
+    if (lOut.length) lSh.getRange(2, lCol, lOut.length, 1).setNumberFormat('@').setValues(lOut);
+
+    var msg = 'หมุนกุญแจสำเร็จ สมาชิก ' + mOut.length + ' ระเบียน ประวัติ ' + lOut.length + ' รายการ' +
+      (failed ? ' (ถอดรหัสไม่ได้ ' + failed + ' ช่อง คงค่าเดิมไว้)' : '');
+    writeLog_({ username: 'ระบบ', role: 'system' }, 'security.key_rotate', 'system', '-', msg,
+      { records: mOut.length, logs: lOut.length, failed: failed });
+    Logger.log(msg);
+    return msg;
+  }, 30000);
 }

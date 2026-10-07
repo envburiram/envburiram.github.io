@@ -6,7 +6,7 @@
  *   SPREADSHEET_ID  ID ของ Google Sheets ที่ใช้บันทึกข้อมูล
  *   SLIDE_ID        ID ของ Google Slides ต้นแบบแผนที่
  *   FOLDER_ID       ID ของโฟลเดอร์ Google Drive ที่เก็บรูปแผนที่
- *   NOTIFY_EMAIL    อีเมลผู้รับรายงาน (หลายคนคั่นด้วย ,) ถ้าไม่ตั้งค่าจะไม่ส่งอีเมล
+ *   NOTIFY_EMAIL    อีเมลผู้รับรายงาน (หลายคน คั่นด้วย ,) ถ้าไม่ตั้งค่าจะไม่ส่งอีเมล
  */
 
 const TIME_ZONE = "Asia/Bangkok"
@@ -237,7 +237,8 @@ function createMapImage_(config, amphoe, br, now) {
 
     const file = DriveApp.getFolderById(config.folderId).createFile(response.getAs("image/jpeg").setName(name + ".jpg"))
     try {
-      file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW)
+      // ANYONE_WITH_LINK: ดูได้เฉพาะคนที่มีลิงก์ ไม่ถูกค้นเจอแบบ ANYONE
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)
     }
     catch (error) {
       console.warn("ตั้งค่าแชร์รูปแผนที่ไม่ได้ (โดเมนอาจไม่อนุญาต): " + error.message)

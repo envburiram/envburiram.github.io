@@ -11,6 +11,15 @@
  *    และทุกครั้งจะถูกบันทึกไว้ในประวัติการใช้งาน
  *************************************************************/
 
+/**
+ * กัน formula injection ในไฟล์ส่งออก : ข้อความที่ขึ้นต้นด้วย = + - @ แท็บ หรือขึ้นบรรทัด
+ * จะถูกเติม ' ข้างหน้า ทั้งในสเปรดชีตชั่วคราว (Google Sheets ถือว่าเป็นข้อความ) และใน CSV (ตามแนวทาง OWASP)
+ * ไม่เช่นนั้นข้อมูลที่ผู้สมัครกรอก เช่น =HYPERLINK(...) จะกลายเป็นสูตรในไฟล์ของผู้ดูแล
+ */
+function formulaSafe_(v) {
+  return typeof v === 'string' && /^[=+\-@\t\r\n]/.test(v) ? "'" + v : v;
+}
+
 var EXPORT_FIELDS = [
   'member_code', 'status', 'prefix', 'first_name', 'last_name', 'national_id', 'birthdate', 'gender',
   'member_type', 'position', 'organization', 'work_type', 'work_address',
@@ -96,7 +105,7 @@ function apiExportExcel(token, opt, client) {
 
     // ส่วนหัวรายงาน
     var settings = getSettings_();
-    sh.getRange(1, 1).setValue(settings.CLUB_NAME).setFontSize(14).setFontWeight('bold');
+    sh.getRange(1, 1).setValue(formulaSafe_(settings.CLUB_NAME)).setFontSize(14).setFontWeight('bold');
     sh.getRange(2, 1).setValue(
       (isLog ? 'รายงานประวัติการใช้งานระบบ' : 'ทะเบียนสมาชิก') +
       '  ณ วันที่ ' + Utilities.formatDate(new Date(), APP.TZ, 'd MMM yyyy HH:mm') +
@@ -109,7 +118,8 @@ function apiExportExcel(token, opt, client) {
     sh.getRange(startRow, 1, 1, built.header.length).setValues([built.header])
       .setFontWeight('bold').setBackground('#0e5b4e').setFontColor('#ffffff');
     if (built.data.length) {
-      sh.getRange(startRow + 1, 1, built.data.length, built.header.length).setValues(built.data);
+      sh.getRange(startRow + 1, 1, built.data.length, built.header.length)
+        .setValues(built.data.map(function (row) { return row.map(formulaSafe_); }));
     }
     sh.setFrozenRows(startRow);
     sh.getRange(startRow, 1, built.data.length + 1, built.header.length)
@@ -152,7 +162,7 @@ function apiExportCsv(token, opt, client) {
 
   var lines = [built.header].concat(built.data).map(function (row) {
     return row.map(function (v) {
-      var t = String(v === null || v === undefined ? '' : v).replace(/^'/, '');
+      var t = formulaSafe_(String(v === null || v === undefined ? '' : v).replace(/^'/, ''));
       return '"' + t.replace(/"/g, '""') + '"';
     }).join(',');
   }).join('\r\n');

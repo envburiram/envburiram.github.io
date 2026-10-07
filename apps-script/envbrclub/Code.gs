@@ -77,7 +77,7 @@ var STATUS_LABELS = {
 var ADMIN_COLS = ['username', 'display_name', 'email', 'role', 'pw_hash', 'pw_salt', 'pw_iter',
   'status', 'must_change', 'created_at', 'last_login', 'fail_count'];
 var LOG_COLS = ['ts', 'actor', 'role', 'action', 'target_type', 'target_id', 'summary', 'detail_enc', 'client'];
-var SESSION_COLS = ['token_hash', 'username', 'role', 'display_name', 'created_at', 'expire_at', 'client'];
+var SESSION_COLS = ['token_hash', 'username', 'role', 'display_name', 'created_at', 'expire_at', 'client', 'must_change'];
 var CONSENT_COLS = ['ts', 'member_id', 'member_code', 'consent_version', 'purposes', 'channel', 'client'];
 
 /* =========================================================
@@ -89,15 +89,15 @@ function doGet(e) {
   try {
     switch (page) {
       case 'admin':
-        return render_('Admin', 'ผู้ดูแลระบบ · ' + APP.SHORT);
+        return render_('Admin', 'ผู้ดูแลระบบ · ' + APP.SHORT, null, false);
       case 'verify':
-        return render_('Verify', 'ตรวจสอบสมาชิก · ' + APP.SHORT, { t: p.t || '' });
+        return render_('Verify', 'ตรวจสอบสมาชิก · ' + APP.SHORT, { t: cleanToken_(p.t) }, true);
       case 'card':
-        return render_('Card', 'บัตรสมาชิก', { pt: p.pt || '' });
+        return render_('Card', 'บัตรสมาชิก', { pt: cleanToken_(p.pt) }, false);
       case 'privacy':
-        return render_('Privacy', 'ประกาศความเป็นส่วนตัว · ' + APP.SHORT);
+        return render_('Privacy', 'ประกาศความเป็นส่วนตัว · ' + APP.SHORT, null, true);
       default:
-        return render_('Register', 'สมัครสมาชิก · ' + APP.SHORT);
+        return render_('Register', 'สมัครสมาชิก · ' + APP.SHORT, null, true);
     }
   } catch (err) {
     return HtmlService.createHtmlOutput(
@@ -106,7 +106,11 @@ function doGet(e) {
   }
 }
 
-function render_(file, title, params) {
+/**
+ * allowEmbed : ให้เว็บอื่นฝังหน้าใน iframe ได้ (เฉพาะหน้าสาธารณะ)
+ * หน้าผู้ดูแลและหน้าบัตรห้ามฝัง เพื่อกัน clickjacking
+ */
+function render_(file, title, params, allowEmbed) {
   var t = HtmlService.createTemplateFromFile(file);
   t.APP = APP;
   t.PARAMS = params || {};
@@ -115,7 +119,23 @@ function render_(file, title, params) {
   return t.evaluate()
     .setTitle(title)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setXFrameOptionsMode(allowEmbed ? HtmlService.XFrameOptionsMode.ALLOWALL : HtmlService.XFrameOptionsMode.DEFAULT);
+}
+
+/** โทเคนในลิงก์เป็น base64 แบบ web-safe เท่านั้น ค่าอื่นทิ้งไป */
+function cleanToken_(v) {
+  v = String(v || '');
+  return /^[A-Za-z0-9_-]{1,128}$/.test(v) ? v : '';
+}
+
+/**
+ * แปลงค่าเป็น JSON สำหรับฝังใน <script> ของเทมเพลต
+ * JSON.stringify อย่างเดียวไม่พอ เพราะข้อความ "</script>" จะปิดแท็กสคริปต์และเปิดช่องให้ฝังสคริปต์ได้
+ */
+function jsonForScript_(v) {
+  return JSON.stringify(v === undefined ? null : v)
+    .replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
 function include(filename) {
@@ -182,8 +202,22 @@ function readTable_(name, cols) {
   });
 }
 
+/**
+ * เตรียมแถวว่างที่ตั้งรูปแบบเป็นข้อความ (@) ไว้ล่วงหน้าเสมอ
+ * appendRow จะเขียนลงแถวเหล่านี้ ค่าที่ขึ้นต้นด้วย = + - @ จึงถูกเก็บเป็นข้อความ ไม่ถูกตีความเป็นสูตร
+ * (กัน formula injection จากข้อมูลที่ผู้ใช้ภายนอกกรอก และกันโทเคน/แฮชที่ขึ้นต้นด้วย - หรือ + เพี้ยน)
+ */
+function ensureTextRows_(sh, width) {
+  var max = sh.getMaxRows();
+  if (sh.getLastRow() + 1 <= max) return;
+  var add = 500;
+  sh.insertRowsAfter(max, add);
+  sh.getRange(max + 1, 1, add, width).setNumberFormat('@');
+}
+
 function appendRow_(name, cols, obj) {
   var sh = ensureColumns_(sheet_(name), cols.length);
+  ensureTextRows_(sh, cols.length);
   var row = cols.map(function (c) { return obj[c] === undefined || obj[c] === null ? '' : obj[c]; });
   sh.appendRow(row);
   return sh.getLastRow();
@@ -192,7 +226,25 @@ function appendRow_(name, cols, obj) {
 function updateRow_(name, cols, rowIndex, obj) {
   var sh = ensureColumns_(sheet_(name), cols.length);
   var row = cols.map(function (c) { return obj[c] === undefined || obj[c] === null ? '' : obj[c]; });
-  sh.getRange(rowIndex, 1, 1, cols.length).setValues([row]);
+  sh.getRange(rowIndex, 1, 1, cols.length).setNumberFormat('@').setValues([row]);
+}
+
+/**
+ * ทำงานภายใต้ script lock — งานที่อ่านแล้วเขียนกลับตามเลขแถว หรือลบแถว ต้องผ่านฟังก์ชันนี้
+ * ไม่เช่นนั้นการลบแถวพร้อมกันจะทำให้เลขแถวเลื่อน แล้วเขียนทับข้อมูลของคนอื่น
+ * เรียกซ้อนกันได้ (ถ้าถือ lock อยู่แล้วจะทำงานต่อทันที)
+ */
+function withScriptLock_(fn, waitMs) {
+  if (withScriptLock_._held) return fn();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(waitMs || 20000)) throw new Error('ระบบกำลังทำงานอื่นอยู่ กรุณาลองใหม่อีกครั้ง');
+  withScriptLock_._held = true;
+  try {
+    return fn();
+  } finally {
+    withScriptLock_._held = false;
+    lock.releaseLock();
+  }
 }
 
 /* =========================================================
@@ -252,13 +304,14 @@ function apiSaveSettings(token, data) {
   var map = {};
   for (var i = 1; i < rows.length; i++) map[String(rows[i][0])] = i + 1;
   var changed = [];
-  Object.keys(data).forEach(function (k) {
-    if (!(k in DEFAULT_SETTINGS)) return;
-    var v = String(data[k] === null || data[k] === undefined ? '' : data[k]);
+  Object.keys(data || {}).forEach(function (k) {
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k)) return;
+    var v = String(data[k] === null || data[k] === undefined ? '' : data[k]).substring(0, 500);
     if (map[k]) {
       var old = String(sh.getRange(map[k], 2).getValue());
-      if (old !== v) { sh.getRange(map[k], 2).setValue(v); changed.push(k); }
+      if (old !== v) { sh.getRange(map[k], 2).setNumberFormat('@').setValue(v); changed.push(k); }
     } else {
+      ensureTextRows_(sh, 3);
       sh.appendRow([k, v, '']); changed.push(k);
     }
   });
@@ -297,6 +350,7 @@ function setup() {
   var st = s.getSheetByName(SHEETS.SETTINGS);
   if (!st) {
     st = s.insertSheet(SHEETS.SETTINGS);
+    st.getRange(1, 1, st.getMaxRows(), 3).setNumberFormat('@');   // เก็บเป็นข้อความ ไม่ตีความเป็นสูตร
     st.getRange(1, 1, 1, 3).setValues([['key', 'value', 'คำอธิบาย']]).setFontWeight('bold');
     var rows = Object.keys(DEFAULT_SETTINGS).map(function (k) { return [k, DEFAULT_SETTINGS[k], '']; });
     st.getRange(2, 1, rows.length, 3).setValues(rows);
@@ -307,7 +361,7 @@ function setup() {
   if (def && s.getSheets().length > 1) s.deleteSheet(def);
 
   // 3) กุญแจเข้ารหัส (สร้างครั้งเดียว เก็บใน Script Properties)
-  cryptoGetMasterKey_();
+  cryptoGetMasterKey_(true);
 
   // 4) โฟลเดอร์เก็บรูปถ่าย/ลายเซ็น (สิทธิ์เฉพาะเจ้าของ)
   ensureFolder_('MEDIA_FOLDER_ID', 'สื่อระบบสมาชิก-' + APP.SHORT);
@@ -315,11 +369,12 @@ function setup() {
 
   // 5) บัญชีผู้ดูแลสูงสุดเริ่มต้น
   var msg = '';
+  // ไม่เก็บรหัสผ่านเริ่มต้นไว้ใน Script Properties (เวอร์ชันก่อนหน้าเคยเก็บไว้ ลบทิ้งถ้ายังค้างอยู่)
+  props.deleteProperty('FIRST_LOGIN_HINT');
   if (readTable_(SHEETS.ADMINS, ADMIN_COLS).length === 0) {
-    var tempPw = 'BR' + Math.floor(Math.random() * 900000 + 100000) + '#eh';
+    var tempPw = tempPassword_();
     createAdminRecord_('admin', 'ผู้ดูแลระบบสูงสุด', getSettings_().CLUB_EMAIL, 'superadmin', tempPw, true);
-    props.setProperty('FIRST_LOGIN_HINT', 'admin / ' + tempPw);
-    msg = '\n\n>>> บัญชีผู้ดูแลเริ่มต้น\n    ชื่อผู้ใช้ : admin\n    รหัสผ่าน  : ' + tempPw +
+    msg ='\n\n>>> บัญชีผู้ดูแลเริ่มต้น\n    ชื่อผู้ใช้ : admin\n    รหัสผ่าน  : ' + tempPw +
       '\n    (ระบบจะบังคับเปลี่ยนรหัสผ่านเมื่อเข้าใช้ครั้งแรก)';
   }
 
@@ -440,15 +495,17 @@ function ensureTrigger_(fn, hour) {
 function dailyMaintenance() {
   var today = fmtDate_(new Date());
   var sh = sheet_(SHEETS.MEMBERS);
-  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
   var idxStatus = M_COLS.indexOf('status') + 1;
-  var n = 0;
-  rows.forEach(function (r) {
-    if (r.status === 'active' && r.expire_date && String(r.expire_date) < today) {
-      sh.getRange(r._row, idxStatus).setValue('expired');
-      n++;
-    }
-  });
+  var n = withScriptLock_(function () {
+    var count = 0;
+    readTable_(SHEETS.MEMBERS, M_COLS).forEach(function (r) {
+      if (r.status === 'active' && r.expire_date && String(r.expire_date) < today) {
+        sh.getRange(r._row, idxStatus).setValue('expired');
+        count++;
+      }
+    });
+    return count;
+  }, 60000);
   cleanupSessions_();
   cleanupExports_();
   if (n) writeLog_({ username: 'ระบบ', role: 'system' }, 'member.autoexpire', 'member', '-',
@@ -490,6 +547,19 @@ function escapeHtml_(s) {
 }
 
 function uuid_() { return Utilities.getUuid(); }
+
+/** วันที่รูปแบบ yyyy-MM-dd (ค.ศ.) ที่มีอยู่จริง */
+function isDateStr_(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+  if (!m) return false;
+  var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.getFullYear() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 && d.getDate() === Number(m[3]);
+}
+
+/** รหัสผ่านชั่วคราวจากตัวสุ่มของระบบเข้ารหัส (ไม่ใช้ Math.random) มีทั้งตัวอักษรและตัวเลข */
+function tempPassword_() {
+  return 'Br' + randomToken_(12) + '7';
+}
 
 /** ตรวจเลขประจำตัวประชาชน 13 หลักตามสูตรตรวจสอบ */
 function isValidThaiID_(id) {

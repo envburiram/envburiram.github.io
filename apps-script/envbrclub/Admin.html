@@ -252,9 +252,9 @@
 </div>
 
 <script>
-var WEBAPP_URL = <?!= JSON.stringify(WEBAPP_URL) ?>;
+var WEBAPP_URL = <?!= jsonForScript_(WEBAPP_URL) ?>;
 var TOKEN = sessionStorage.getItem('br_token') || '';
-var ME = null, PAGE = 1, LOGPAGE = 1, CURRENT = null, ACTIONS = {};
+var ME = null, PAGE = 1, LOGPAGE = 1, CURRENT = null, ACTIONS = {}, FORCE_PW = false;
 var STATUSES = {pending:'รอตรวจสอบ',active:'สมาชิกปัจจุบัน',suspended:'ระงับชั่วคราว',expired:'หมดอายุ',revoked:'พ้นสมาชิกภาพ'};
 var MEMBER_TYPES = ['สามัญ','วิสามัญ','สมทบ','กิตติมศักดิ์'];
 var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด','สำนักงานสาธารณสุขอำเภอ','โรงพยาบาล',
@@ -308,15 +308,31 @@ document.addEventListener('DOMContentLoaded', function(){
 
   if(TOKEN){
     call('apiWhoAmI', TOKEN).then(function(r){
-      if(r.ok){ ME=r.me; startApp(); } else { showLogin(); }
+      if(!r.ok) return showLogin();
+      ME=r.me;
+      if(ME.mustChange) forcePw(); else startApp();
     }).catch(showLogin);
   } else showLogin();
 });
 
 function showLogin(){
   TOKEN=''; sessionStorage.removeItem('br_token');
+  releasePw();
+  closeModal('pwModal');
   document.getElementById('loginView').classList.remove('hidden');
   document.getElementById('appView').classList.add('hidden');
+}
+/* บัญชีที่ต้องเปลี่ยนรหัสผ่านเริ่มต้น : เปิดหน้าต่างเปลี่ยนรหัสผ่านแบบปิดไม่ได้ (เซิร์ฟเวอร์ก็ปฏิเสธคำขออื่นจนกว่าจะเปลี่ยน) */
+function forcePw(){
+  FORCE_PW = true;
+  document.getElementById('pwForce').classList.remove('hidden');
+  document.querySelector('#pwModal .x').classList.add('hidden');
+  openModal('pwModal');
+}
+function releasePw(){
+  FORCE_PW = false;
+  document.getElementById('pwForce').classList.add('hidden');
+  document.querySelector('#pwModal .x').classList.remove('hidden');
 }
 function doLogin(e){
   e.preventDefault();
@@ -327,11 +343,8 @@ function doLogin(e){
       if(!r.ok) return toast(r.error, true);
       TOKEN=r.token; ME=r.me; sessionStorage.setItem('br_token', TOKEN);
       document.getElementById('p').value='';
+      if(r.me.mustChange) return forcePw();
       startApp();
-      if(r.me.mustChange){
-        document.getElementById('pwForce').classList.remove('hidden');
-        openModal('pwModal');
-      }
     }).catch(function(err){ b.disabled=false; b.textContent='เข้าสู่ระบบ'; toast(errText(err), true); });
 }
 function doLogout(){
@@ -355,6 +368,7 @@ function startApp(){
 function handleErr(err){
   loading(false);
   if(isAuthError(err)){ toast(errText(err), true); showLogin(); return; }
+  if(isPwChangeError(err)){ toast(errText(err), true); forcePw(); return; }
   toast(errText(err), true);
 }
 
@@ -483,12 +497,12 @@ function buildForm(containerId, p, m){
     '</div>'+
     '<div class="media-box" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">'+
       '<div><div class="thumb" id="'+p+'photoThumb">'+
-        (m.photo_url?'<img src="'+m.photo_url+'">':'<span>รูปถ่าย</span>')+'</div>'+
+        (m.photo_url?'<img src="'+esc(m.photo_url)+'">':'<span>รูปถ่าย</span>')+'</div>'+
         (ro?'':'<div style="margin-top:8px"><input type="file" id="'+p+'photoFile" accept="image/*" style="font-size:.82rem"></div>'+
         '<label class="check" style="margin-top:6px;font-size:.82rem"><input type="checkbox" id="'+p+'rmPhoto"><span>ลบรูปถ่าย</span></label>')+
       '</div>'+
       '<div><div class="thumb sign" id="'+p+'signThumb">'+
-        (m.signature_url?'<img src="'+m.signature_url+'">':'<span>ลายเซ็น</span>')+'</div>'+
+        (m.signature_url?'<img src="'+esc(m.signature_url)+'">':'<span>ลายเซ็น</span>')+'</div>'+
         (ro?'':'<div style="margin-top:8px"><input type="file" id="'+p+'signFile" accept="image/*" style="font-size:.82rem"></div>'+
         '<label class="check" style="margin-top:6px;font-size:.82rem"><input type="checkbox" id="'+p+'rmSign"><span>ลบลายเซ็น</span></label>')+
       '</div>'+
@@ -709,8 +723,10 @@ function savePassword(){
     if(!r.ok) return toast(r.error, true);
     toast('เปลี่ยนรหัสผ่านเรียบร้อย');
     ['op','n1','n2'].forEach(function(i){ document.getElementById(i).value=''; });
-    document.getElementById('pwForce').classList.add('hidden');
+    var wasForced = FORCE_PW;
+    releasePw();
     closeModal('pwModal');
+    if(wasForced){ ME.mustChange = false; startApp(); }
   }).catch(handleErr);
 }
 
@@ -739,7 +755,10 @@ function saveSettings(){
 function openModal(id){ document.getElementById(id).classList.add('on'); }
 function closeModal(id){ document.getElementById(id).classList.remove('on'); }
 document.addEventListener('keydown', function(e){
-  if(e.key==='Escape') document.querySelectorAll('.modal.on').forEach(function(m){ m.classList.remove('on'); });
+  if(e.key==='Escape') document.querySelectorAll('.modal.on').forEach(function(m){
+    if(FORCE_PW && m.id==='pwModal') return;
+    m.classList.remove('on');
+  });
 });
 </script>
 </body>

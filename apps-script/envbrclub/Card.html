@@ -179,9 +179,12 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<!-- integrity : ถ้าไฟล์บน CDN ถูกแก้ไข เบราว์เซอร์จะไม่รัน (แล้วระบบสลับไปใช้บริการสำรองสร้าง QR แทน) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
+  integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"
+  crossorigin="anonymous"></script>
 <script>
-var PT = <?!= JSON.stringify(PARAMS.pt || '') ?>;
+var PT = <?!= jsonForScript_(PARAMS.pt || '') ?>;
 var DATA = null;
 
 document.addEventListener('DOMContentLoaded', function(){
@@ -212,23 +215,23 @@ function render(r){
   document.getElementById('clubName').textContent = k.name;
   document.getElementById('clubNameEn').textContent = k.name_en;
   document.getElementById('mType').textContent = 'สมาชิก' + (c.member_type||'สามัญ');
-  if(k.logo) document.getElementById('logo').innerHTML = '<img src="'+k.logo+'">';
+  if(k.logo) document.getElementById('logo').innerHTML = '<img src="'+esc(k.logo)+'">';
 
-  document.getElementById('photo').innerHTML = c.photo ? '<img src="'+c.photo+'">' : 'ไม่มีรูปถ่าย';
+  document.getElementById('photo').innerHTML = c.photo ? '<img src="'+esc(c.photo)+'">' : 'ไม่มีรูปถ่าย';
   document.getElementById('cName').textContent = c.full_name;
   document.getElementById('cPos').textContent = c.position || '-';
   document.getElementById('cOrg').textContent = c.organization || '-';
   document.getElementById('issue').textContent = thaiDate(c.issue_date, true);
   document.getElementById('expire').textContent = thaiDate(c.expire_date, true);
   document.getElementById('code').innerHTML = '<small>เลขสมาชิก</small>' + esc(c.member_code);
-  if(c.signature) document.getElementById('memberSign').innerHTML = '<img src="'+c.signature+'">';
+  if(c.signature) document.getElementById('memberSign').innerHTML = '<img src="'+esc(c.signature)+'">';
 
   document.getElementById('bAddr').textContent = k.address;
   document.getElementById('bNote').textContent = k.note + '  โทร. ' + k.phone + '  ' + k.email;
   document.getElementById('serial').textContent = c.member_code;
   document.getElementById('presName').textContent = k.president;
   document.getElementById('presTitle').textContent = k.president_title;
-  if(k.president_sign) document.getElementById('presSign').innerHTML = '<img src="'+k.president_sign+'">';
+  if(k.president_sign) document.getElementById('presSign').innerHTML = '<img src="'+esc(k.president_sign)+'">';
 
   makeQR(c.verify_url);
   document.getElementById('zoom').style.display = '';

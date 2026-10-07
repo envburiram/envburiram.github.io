@@ -178,22 +178,25 @@ function errText(e){
   var m = (e && e.message) ? e.message : String(e||'เกิดข้อผิดพลาด');
   if(m.indexOf('AUTH:')===0) return m.substring(5);
   if(m.indexOf('PERM:')===0) return m.substring(5);
+  if(m.indexOf('PWCHANGE:')===0) return m.substring(9);
   return m;
 }
 function isAuthError(e){ return e && e.message && e.message.indexOf('AUTH:')===0; }
+function isPwChangeError(e){ return e && e.message && e.message.indexOf('PWCHANGE:')===0; }
 
 /* ================= วันที่แบบไทย ================= */
+/* คืนค่าเฉพาะตัวเลขและชื่อเดือน ค่าที่ไม่ใช่วันที่คืน '-' เพื่อให้นำไปต่อ HTML ได้อย่างปลอดภัย */
 var TH_MON = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 function thaiDate(iso, full){
-  if(!iso) return '-';
-  var p = String(iso).substring(0,10).split('-');
-  if(p.length<3) return iso;
-  var y = Number(p[0])+543;
-  return Number(p[2]) + ' ' + TH_MON[Number(p[1])-1] + ' ' + (full? y : String(y).substring(2));
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+  if(!m || Number(m[2])<1 || Number(m[2])>12) return '-';
+  var y = Number(m[1])+543;
+  return Number(m[3]) + ' ' + TH_MON[Number(m[2])-1] + ' ' + (full? y : String(y).substring(2));
 }
 function thaiDateTime(s){
-  if(!s) return '-';
-  return thaiDate(s,true) + ' ' + String(s).substring(11,16) + ' น.';
+  var m = /^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})/.exec(String(s||''));
+  if(!m) return thaiDate(s,true);
+  return thaiDate(s,true) + ' ' + m[1] + ' น.';
 }
 
 /* ================= ย่อรูปฝั่งผู้ใช้ก่อนอัปโหลด ================= */

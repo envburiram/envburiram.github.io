@@ -41,8 +41,8 @@
 </footer>
 
 <script>
-var T = <?!= JSON.stringify(PARAMS.t || '') ?>;
-var CLUB_PHONE = <?!= JSON.stringify(SETTINGS.CLUB_PHONE) ?>;
+var T = <?!= jsonForScript_(PARAMS.t || '') ?>;
+var CLUB_PHONE = <?!= jsonForScript_(SETTINGS.CLUB_PHONE) ?>;
 document.addEventListener('DOMContentLoaded', function(){
   if(!T){ return show(banner('no','ไม่พบรหัสตรวจสอบ','กรุณาสแกนคิวอาร์โค้ดด้านหลังบัตรอีกครั้ง')); }
   call('apiVerify', T, clientInfo()).then(function(r){
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     var html = '<div class="result">' + bannerInner(kind, head, sub) +
       '<div class="who">' +
-        '<div class="ph">' + (d.photo ? '<img src="'+d.photo+'" alt="">' : 'ไม่มีรูป') + '</div>' +
+        '<div class="ph">' + (d.photo ? '<img src="'+esc(d.photo)+'" alt="">' : 'ไม่มีรูป') + '</div>' +
         '<div><h2>'+esc(d.full_name)+'</h2>' +
         '<div style="color:var(--ink-2);font-size:.92rem">'+esc(d.position||'-')+'</div>' +
         '<div style="color:var(--ink-2);font-size:.92rem">'+esc(d.organization||'-')+'</div></div>' +
@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', function(){
       '<dl class="kv">' +
         row('เลขสมาชิก', d.member_code) +
         row('ประเภทสมาชิก', d.member_type||'-') +
-        row('สถานะ', '<span class="tag '+esc(d.status)+'">'+esc(d.status_label)+'</span>') +
+        rowHtml('สถานะ', '<span class="tag '+esc(d.status)+'">'+esc(d.status_label)+'</span>') +
         row('วันออกบัตร', thaiDate(d.issue_date,true)) +
         row('บัตรหมดอายุ', thaiDate(d.expire_date,true)) +
       '</dl>' +
@@ -77,7 +77,8 @@ document.addEventListener('DOMContentLoaded', function(){
   }).catch(function(e){ show(banner('no','ตรวจสอบไม่สำเร็จ', errText(e))); });
 });
 
-function row(k,v){ return '<dt>'+esc(k)+'</dt><dd>'+v+'</dd>'; }
+function row(k,v){ return rowHtml(k, esc(v)); }
+function rowHtml(k,html){ return '<dt>'+esc(k)+'</dt><dd>'+html+'</dd>'; }
 function bannerInner(kind, head, sub){
   var mark = kind==='ok' ? '✓' : (kind==='warn' ? '!' : '×');
   return '<div class="banner '+kind+'"><div class="mark">'+mark+'</div>'+

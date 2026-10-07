@@ -80,7 +80,8 @@ function cleanInput_(d) {
   return out;
 }
 
-function validateMember_(d, existingId) {
+/** isPublic : มาจากหน้าสมัครสาธารณะ — ห้ามบอกข้อมูลของสมาชิกที่มีอยู่แล้ว */
+function validateMember_(d, existingId, isPublic) {
   var e = [];
   if (!d.prefix) e.push('กรุณาเลือกคำนำหน้า');
   if (!d.first_name) e.push('กรุณากรอกชื่อ');
@@ -95,7 +96,13 @@ function validateMember_(d, existingId) {
   if (!d.organization) e.push('กรุณากรอกหน่วยงาน');
   if (String(d.organization || '').length > 120) e.push('ชื่อหน่วยงานยาวเกิน 120 ตัวอักษร');
   if (d.member_type && MEMBER_TYPES.indexOf(d.member_type) < 0) e.push('ประเภทสมาชิกไม่ถูกต้อง');
-  if (d.birthdate && !/^\d{4}-\d{2}-\d{2}$/.test(d.birthdate)) e.push('รูปแบบวันเกิดไม่ถูกต้อง');
+  if (d.birthdate && !isDateStr_(d.birthdate)) e.push('รูปแบบวันเกิดไม่ถูกต้อง');
+  if (d.issue_date && !isDateStr_(d.issue_date)) e.push('รูปแบบวันออกบัตรไม่ถูกต้อง');
+  if (d.expire_date && !isDateStr_(d.expire_date)) e.push('รูปแบบวันหมดอายุบัตรไม่ถูกต้อง');
+  if (d.status && (!Object.prototype.hasOwnProperty.call(STATUS_LABELS, d.status) || d.status === 'deleted')) {
+    e.push('สถานะสมาชิกไม่ถูกต้อง');
+  }
+  if (d.work_type && WORK_TYPES.indexOf(d.work_type) < 0) e.push('ประเภทหน่วยงานไม่ถูกต้อง');
 
   // กันเลขบัตรประชาชนซ้ำ โดยไม่ต้องถอดรหัสทั้งตาราง
   if (d.national_id) {
@@ -104,7 +111,9 @@ function validateMember_(d, existingId) {
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].nid_idx === idx && rows[i].status !== 'deleted' &&
         String(rows[i].id) !== String(existingId || '')) {
-        e.push('เลขประจำตัวประชาชนนี้มีในระบบแล้ว (เลขสมาชิก ' + rows[i].member_code + ')');
+        // หน้าสาธารณะไม่บอกเลขสมาชิก เพราะใครก็ใช้เลขบัตรประชาชนของคนอื่นสอบถามได้
+        e.push(isPublic ? 'เลขประจำตัวประชาชนนี้สมัครไว้แล้ว หากต้องการแก้ไขข้อมูลกรุณาติดต่อชมรม'
+          : 'เลขประจำตัวประชาชนนี้มีในระบบแล้ว (เลขสมาชิก ' + rows[i].member_code + ')');
         break;
       }
     }
@@ -139,8 +148,12 @@ function mediaDataUrl_(fileId) {
   if (!fileId) return '';
   try {
     var f = DriveApp.getFileById(fileId);
-    var b = f.getBlob();
-    return 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
+    // ส่งออกเฉพาะไฟล์รูปภาพ (ไม่รวม SVG) กันการใส่รหัสไฟล์อื่นใน Drive ของเจ้าของระบบ (เช่นช่องตราชมรม) เพื่อดึงเนื้อหาออกไป
+    var type = String(f.getMimeType() || '').toLowerCase();
+    if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(type)) return '';
+    var bytes = f.getBlob().getBytes();
+    if (bytes.length > 5 * 1024 * 1024) return '';
+    return 'data:' + type + ';base64,' + Utilities.base64Encode(bytes);
   } catch (e) { return ''; }
 }
 
@@ -148,17 +161,17 @@ function mediaDataUrl_(fileId) {
  * สมัครสมาชิกผ่านหน้าเว็บ (สาธารณะ)
  * =======================================================*/
 function apiRegister(payload, client) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
+  return withScriptLock_(function () {
     var s = getSettings_();
     if (s.OPEN_REGISTER !== 'yes') return { ok: false, error: 'ขณะนี้ปิดรับสมัครสมาชิกชั่วคราว' };
 
     var d = cleanInput_(payload || {});
+    // ผู้สมัครกำหนดสถานะ วันออกบัตร และหมายเหตุของผู้ดูแลเองไม่ได้
+    delete d.status; delete d.issue_date; delete d.expire_date; delete d.note;
     if (!payload || payload.consent !== true) {
       return { ok: false, error: 'กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคลก่อนส่งใบสมัคร' };
     }
-    var errs = validateMember_(d, null);
+    var errs = validateMember_(d, null, true);
     if (errs.length) return { ok: false, error: errs.join('\n') };
 
     var code = nextMemberCode_();
@@ -201,9 +214,7 @@ function apiRegister(payload, client) {
       { member_code: code, organization: d.organization, position: d.position }, client);
 
     return { ok: true, member_code: code, message: 'ส่งใบสมัครเรียบร้อย' };
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 /* =========================================================
@@ -217,20 +228,24 @@ function apiListMembers(token, opt) {
   var all = loadMembers_(opt.includeDeleted && s.role === 'superadmin');
 
   var q = String(opt.q || '').trim().toLowerCase();
+  // ค้นได้เฉพาะฟิลด์ที่บทบาทนั้นเห็นค่าเต็ม ไม่เช่นนั้นจะใช้การค้นหาเดาค่าที่ถูกปกปิดทีละหลักได้
+  var sensitive = canSeeSensitive_(s.role);
   var filtered = all.filter(function (m) {
     if (opt.status && m.status !== opt.status) return false;
     if (opt.member_type && m.member_type !== opt.member_type) return false;
     if (opt.work_type && m.work_type !== opt.work_type) return false;
     if (q) {
-      var hay = [m.member_code, m.prefix + m.first_name + ' ' + m.last_name, m.position,
-        m.organization, m.phone, m.email, m.national_id].join(' ').toLowerCase();
-      if (hay.indexOf(q) < 0) return false;
+      var parts = [m.member_code, m.prefix + m.first_name + ' ' + m.last_name, m.position, m.organization];
+      if (sensitive) parts.push(m.phone, m.email);
+      if (s.role === 'superadmin') parts.push(m.national_id);
+      if (parts.join(' ').toLowerCase().indexOf(q) < 0) return false;
     }
     return true;
   });
 
+  var SORTABLE = ['created_at', 'updated_at', 'member_code', 'status', 'member_type', 'organization', 'expire_date'];
   filtered.sort(function (a, b) {
-    var f = opt.sort || 'created_at';
+    var f = SORTABLE.indexOf(opt.sort) >= 0 ? opt.sort : 'created_at';
     var x = String(a[f] || ''), y = String(b[f] || '');
     return opt.desc === false ? (x < y ? -1 : x > y ? 1 : 0) : (x > y ? -1 : x < y ? 1 : 0);
   });
@@ -288,10 +303,12 @@ function apiGetMember(token, id) {
   }
 
   var out = {};
-  M_COLS.forEach(function (c) { out[c] = m[c]; });
+  // ดัชนีค้นหาและรหัสตรวจสอบบัตรไม่ต้องส่งไปหน้าเว็บ
+  var hidden = ['name_idx', 'nid_idx', 'phone_idx', 'email_idx', 'verify_token'];
+  M_COLS.forEach(function (c) { if (hidden.indexOf(c) < 0) out[c] = m[c]; });
   if (!canSeeSensitive_(s.role)) {
     out.national_id = maskValue_('national_id', m.national_id);
-    out.birthdate = ''; out.work_address = ''; out.line_id = '';
+    out.birthdate = ''; out.work_address = ''; out.line_id = ''; out.note = '';
     out.phone = maskValue_('phone', m.phone);
     out.email = maskValue_('email', m.email);
   } else if (s.role !== 'superadmin') {
@@ -308,10 +325,9 @@ function apiGetMember(token, id) {
  * =======================================================*/
 function apiCreateMember(token, data, client) {
   var s = requireRole_(token, ['superadmin', 'admin']);
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    var d = cleanInput_(data || {});
+  data = data || {};
+  return withScriptLock_(function () {
+    var d = cleanInput_(data);
     var errs = validateMember_(d, null);
     if (errs.length) return { ok: false, error: errs.join('\n') };
 
@@ -350,9 +366,7 @@ function apiCreateMember(token, data, client) {
       'เพิ่มสมาชิกใหม่ ' + code + ' สถานะ ' + (STATUS_LABELS[status] || status),
       { id: m.id, member_code: code, organization: d.organization }, client);
     return { ok: true, id: m.id, member_code: code };
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 /* =========================================================
@@ -360,13 +374,12 @@ function apiCreateMember(token, data, client) {
  * =======================================================*/
 function apiUpdateMember(token, id, data, client) {
   var s = requireRole_(token, ['superadmin', 'admin']);
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
+  data = data || {};
+  return withScriptLock_(function () {
     var cur = findMemberById_(id, false);
     if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
 
-    var d = cleanInput_(data || {});
+    var d = cleanInput_(data);
     // ผู้ดูแลระดับ admin แก้เลขบัตรประชาชนไม่ได้ (ป้องกันแก้ค่าที่ถูกปกปิดทับของจริง)
     if (s.role !== 'superadmin') delete d.national_id;
     var merged = Object.assign({}, cur, d);
@@ -414,9 +427,7 @@ function apiUpdateMember(token, id, data, client) {
       { id: cur.id, changes: diff, media: mediaChanges }, client);
 
     return { ok: true, changed: parts };
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 /* =========================================================
@@ -424,55 +435,67 @@ function apiUpdateMember(token, id, data, client) {
  * =======================================================*/
 function apiSetStatus(token, id, status, reason, client) {
   var s = requireRole_(token, ['superadmin', 'admin']);
-  if (!STATUS_LABELS[status] || status === 'deleted') return { ok: false, error: 'สถานะไม่ถูกต้อง' };
-  var cur = findMemberById_(id, false);
-  if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
-  if (cur.status === status) return { ok: true, note: 'สถานะเดิมอยู่แล้ว' };
-
-  var next = Object.assign({}, cur, { status: status, updated_at: now_(), updated_by: s.username });
-  if (status === 'active' && !cur.issue_date) {
-    next.issue_date = fmtDate_(new Date());
-    next.expire_date = addYears_(next.issue_date, APP.CARD_YEARS);
+  if (!Object.prototype.hasOwnProperty.call(STATUS_LABELS, status) || status === 'deleted') {
+    return { ok: false, error: 'สถานะไม่ถูกต้อง' };
   }
-  updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
-  writeLog_(s, 'member.status', 'member', cur.member_code,
-    'เปลี่ยนสถานะ ' + cur.member_code + ' จาก "' + (STATUS_LABELS[cur.status] || cur.status) +
-    '" เป็น "' + STATUS_LABELS[status] + '"' + (reason ? ' เหตุผล: ' + reason : ''),
-    { id: cur.id, from: cur.status, to: status, reason: reason || '' }, client);
-  return { ok: true };
+  reason = String(reason || '').substring(0, 300);
+  return withScriptLock_(function () {
+    var cur = findMemberById_(id, false);
+    if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+    if (cur.status === status) return { ok: true, note: 'สถานะเดิมอยู่แล้ว' };
+
+    var next = Object.assign({}, cur, { status: status, updated_at: now_(), updated_by: s.username });
+    if (status === 'active' && !cur.issue_date) {
+      next.issue_date = fmtDate_(new Date());
+      next.expire_date = addYears_(next.issue_date, APP.CARD_YEARS);
+    }
+    updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
+    writeLog_(s, 'member.status', 'member', cur.member_code,
+      'เปลี่ยนสถานะ ' + cur.member_code + ' จาก "' + (STATUS_LABELS[cur.status] || cur.status) +
+      '" เป็น "' + STATUS_LABELS[status] + '"' + (reason ? ' เหตุผล: ' + reason : ''),
+      { id: cur.id, from: cur.status, to: status, reason: reason }, client);
+    return { ok: true };
+  });
 }
 
 /** ลบเชิงตรรกะ : ยังเก็บข้อมูลไว้ตามระยะเวลาที่กำหนดในนโยบาย */
 function apiDeleteMember(token, id, reason, client) {
   var s = requireRole_(token, ['superadmin', 'admin']);
-  var cur = findMemberById_(id, false);
-  if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
-  var next = Object.assign({}, cur, {
-    status: 'deleted', updated_at: now_(), updated_by: s.username
+  reason = String(reason || '').substring(0, 300);
+  return withScriptLock_(function () {
+    var cur = findMemberById_(id, false);
+    if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+    var next = Object.assign({}, cur, {
+      status: 'deleted', updated_at: now_(), updated_by: s.username
+    });
+    updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
+    writeLog_(s, 'member.delete', 'member', cur.member_code,
+      'ลบสมาชิก ' + cur.member_code + (reason ? ' เหตุผล: ' + reason : ''),
+      { id: cur.id, reason: reason }, client);
+    return { ok: true };
   });
-  updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
-  writeLog_(s, 'member.delete', 'member', cur.member_code,
-    'ลบสมาชิก ' + cur.member_code + (reason ? ' เหตุผล: ' + reason : ''),
-    { id: cur.id, reason: reason || '' }, client);
-  return { ok: true };
 }
 
 /** ลบถาวรตามสิทธิ์เจ้าของข้อมูล (มาตรา 33 PDPA) — เฉพาะผู้ดูแลสูงสุด */
 function apiPurgeMember(token, id, reason, client) {
   var s = requireRole_(token, ['superadmin']);
-  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
-  for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i].id) === String(id)) {
-      var m = decodeMember_(rows[i]);
-      deleteMedia_(m.photo_id); deleteMedia_(m.signature_id);
-      sheet_(SHEETS.MEMBERS).deleteRow(rows[i]._row);
-      writeLog_(s, 'member.purge', 'member', m.member_code,
-        'ลบข้อมูลสมาชิกถาวร ' + m.member_code + (reason ? ' เหตุผล: ' + reason : ''),
-        { member_code: m.member_code, reason: reason || '' }, client);
-      return { ok: true };
+  reason = String(reason || '').substring(0, 300);
+  // ลบแถวทำให้เลขแถวของคนอื่นเลื่อน ต้องถือ lock กันการแก้ไขที่กำลังเขียนตามเลขแถวเดิม
+  return withScriptLock_(function () {
+    var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].id) === String(id)) {
+        var m = decodeMember_(rows[i]);
+        deleteMedia_(m.photo_id); deleteMedia_(m.signature_id);
+        sheet_(SHEETS.MEMBERS).deleteRow(rows[i]._row);
+        writeLog_(s, 'member.purge', 'member', m.member_code,
+          'ลบข้อมูลสมาชิกถาวร ' + m.member_code + (reason ? ' เหตุผล: ' + reason : ''),
+          { member_code: m.member_code, reason: reason }, client);
+        return { ok: true };
+      }
     }
-  }
-  return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+    return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+  });
 }
 
 /* =========================================================

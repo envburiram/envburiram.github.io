@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('Shared') ?>
+<style>
+  .hero{background:var(--green);color:#fff;padding:34px 0 40px}
+  .hero .wrap{display:grid;gap:18px;grid-template-columns:1fr auto;align-items:end}
+  .hero h1{font-size:2rem;margin:0 0 6px;font-weight:700}
+  .hero p{margin:0;opacity:.9;max-width:52ch}
+  .hero .code-note{border:1px solid rgba(255,255,255,.35);border-radius:10px;padding:12px 16px;font-size:.85rem;line-height:1.5}
+  @media(max-width:720px){.hero .wrap{grid-template-columns:1fr}}
+  .form-area{margin-top:-24px}
+  .step{border-left:3px solid var(--green-l);padding-left:16px;margin-bottom:26px}
+  .step > h3{color:var(--green-d);margin-bottom:12px}
+  .consent-box{border:1px solid var(--line);border-radius:8px;padding:16px;background:#fbfcfa;max-height:210px;overflow-y:auto;font-size:.88rem;line-height:1.65;margin-bottom:14px}
+  .consent-box h4{margin:.6em 0 .3em;font-size:.92rem}
+  .consent-box ul{margin:.2em 0 .6em;padding-left:1.2em}
+  .done{text-align:center;padding:40px 20px}
+  .done .code{font-size:2.1rem;font-weight:700;color:var(--green);letter-spacing:.06em;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="wrap">
+    <div class="brand" style="display:block">
+      <h1>สมัครสมาชิก<?= SETTINGS.CLUB_NAME ?></h1>
+      <p>กรอกข้อมูลให้ครบถ้วนตามบัตรประจำตัวประชาชน เจ้าหน้าที่จะตรวจสอบและแจ้งผลกลับทางโทรศัพท์หรืออีเมลที่ท่านให้ไว้</p>
+    </div>
+    <div class="code-note">
+      ข้อมูลของท่านถูกเข้ารหัสก่อนจัดเก็บ<br>
+      และใช้ตามวัตถุประสงค์ที่แจ้งไว้เท่านั้น<br>
+      <a href="<?= WEBAPP_URL ?>?page=privacy" target="_blank" style="color:#fff">อ่านประกาศความเป็นส่วนตัว</a>
+    </div>
+  </div>
+</div>
+
+<div class="wrap form-area">
+  <div id="closed" class="panel hidden">
+    <div class="note warn">ขณะนี้ชมรมปิดรับสมัครสมาชิกชั่วคราว หากมีข้อสงสัยติดต่อ <?= SETTINGS.CLUB_PHONE ?></div>
+  </div>
+
+  <form id="form" class="panel">
+    <div class="step">
+      <h3>ข้อมูลส่วนตัว</h3>
+      <div class="grid g3">
+        <div class="field">
+          <label for="prefix">คำนำหน้า <span class="req">*</span></label>
+          <select id="prefix" required>
+            <option value="">— เลือก —</option>
+            <option>นาย</option><option>นาง</option><option>นางสาว</option>
+            <option>ว่าที่ร้อยตรี</option><option>ดร.</option><option>นายแพทย์</option><option>แพทย์หญิง</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="first_name">ชื่อ <span class="req">*</span></label>
+          <input id="first_name" maxlength="60" required autocomplete="given-name">
+        </div>
+        <div class="field">
+          <label for="last_name">นามสกุล <span class="req">*</span></label>
+          <input id="last_name" maxlength="60" required autocomplete="family-name">
+        </div>
+      </div>
+      <div class="grid g3" style="margin-top:14px">
+        <div class="field">
+          <label for="national_id">เลขประจำตัวประชาชน 13 หลัก <span class="req">*</span></label>
+          <input id="national_id" inputmode="numeric" maxlength="17" required placeholder="เช่น 3 1001 00123 45 6">
+          <span class="help" id="nidHelp">ใช้ยืนยันตัวตนและป้องกันข้อมูลซ้ำ จัดเก็บแบบเข้ารหัส</span>
+        </div>
+        <div class="field">
+          <label for="birthdate">วันเดือนปีเกิด</label>
+          <input id="birthdate" type="date">
+        </div>
+        <div class="field">
+          <label for="gender">เพศ</label>
+          <select id="gender"><option value="">— ไม่ระบุ —</option><option>ชาย</option><option>หญิง</option></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <h3>ข้อมูลการทำงาน</h3>
+      <div class="grid g2">
+        <div class="field">
+          <label for="position">ตำแหน่ง <span class="req">*</span></label>
+          <input id="position" maxlength="80" required placeholder="เช่น นักวิชาการสาธารณสุขชำนาญการ">
+        </div>
+        <div class="field">
+          <label for="work_type">ประเภทหน่วยงาน</label>
+          <select id="work_type"><option value="">— เลือก —</option></select>
+        </div>
+      </div>
+      <div class="grid" style="margin-top:14px">
+        <div class="field">
+          <label for="organization">ชื่อหน่วยงาน <span class="req">*</span></label>
+          <input id="organization" maxlength="120" required placeholder="เช่น สำนักงานสาธารณสุขอำเภอนางรอง">
+          <span class="help">ชื่อนี้จะพิมพ์ลงบัตรสมาชิก ระบบจะย่อขนาดตัวอักษรให้พอดีบัตรโดยไม่ตัดข้อความ</span>
+        </div>
+        <div class="field">
+          <label for="work_address">ที่อยู่หน่วยงาน</label>
+          <textarea id="work_address" maxlength="300"></textarea>
+        </div>
+      </div>
+      <div class="grid g3" style="margin-top:14px">
+        <div class="field">
+          <label for="member_type">ประเภทสมาชิกที่สมัคร</label>
+          <select id="member_type"></select>
+        </div>
+        <div class="field">
+          <label for="education">วุฒิการศึกษาสูงสุด</label>
+          <input id="education" maxlength="80" placeholder="เช่น วท.บ. สาธารณสุขศาสตร์">
+        </div>
+        <div class="field">
+          <label for="license_no">เลขใบอนุญาต/เลขที่ ว.</label>
+          <input id="license_no" maxlength="40">
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <h3>ช่องทางติดต่อ</h3>
+      <div class="grid g3">
+        <div class="field">
+          <label for="phone">โทรศัพท์มือถือ <span class="req">*</span></label>
+          <input id="phone" inputmode="tel" maxlength="15" required placeholder="08xxxxxxxx">
+        </div>
+        <div class="field">
+          <label for="email">อีเมล</label>
+          <input id="email" type="email" maxlength="80">
+        </div>
+        <div class="field">
+          <label for="line_id">ไลน์ไอดี</label>
+          <input id="line_id" maxlength="40">
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <h3>รูปถ่ายและลายเซ็นสำหรับบัตรสมาชิก</h3>
+      <div class="media-box">
+        <div>
+          <div class="thumb" id="photoThumb"><span>รูปถ่าย<br>ขนาด 1 นิ้ว</span></div>
+          <div style="margin-top:8px"><input type="file" id="photoFile" accept="image/*" style="font-size:.85rem"></div>
+          <div class="help" style="max-width:200px">หน้าตรง พื้นหลังสุภาพ ระบบย่อรูปให้อัตโนมัติ</div>
+        </div>
+        <div>
+          <div class="thumb sign" id="signThumb"><span>ลายเซ็น</span></div>
+          <div style="margin-top:8px" class="btn-row">
+            <input type="file" id="signFile" accept="image/*" style="font-size:.85rem">
+          </div>
+          <details style="margin-top:10px">
+            <summary style="cursor:pointer;font-size:.88rem;color:var(--green)">หรือเซ็นบนหน้าจอ</summary>
+            <div class="pad-wrap" style="margin-top:8px">
+              <canvas id="pad" class="pad" width="320" height="110" style="width:320px;height:110px"></canvas>
+            </div>
+            <div class="btn-row" style="margin-top:8px">
+              <button type="button" class="btn-ghost btn-sm" id="padClear">ลบลายเซ็น</button>
+              <button type="button" class="btn-sm" id="padUse">ใช้ลายเซ็นนี้</button>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <h3>ข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคล</h3>
+      <div class="consent-box" id="consentBox"></div>
+      <label class="check" style="margin-bottom:10px">
+        <input type="checkbox" id="consent" required>
+        <span>ข้าพเจ้าได้อ่านและเข้าใจประกาศความเป็นส่วนตัวฉบับที่ <?= APP.CONSENT_VERSION ?> แล้ว
+          และ<b>ยินยอม</b>ให้ชมรมเก็บ รวบรวม ใช้ และเปิดเผยข้อมูลส่วนบุคคลของข้าพเจ้าตามวัตถุประสงค์ข้างต้น
+          ทั้งนี้ข้าพเจ้าทราบว่าสามารถถอนความยินยอมได้ทุกเมื่อ</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="consent_marketing">
+        <span>ยินยอมให้ส่งข่าวสาร กิจกรรม และการอบรมของชมรมทางอีเมล/โทรศัพท์ (ไม่บังคับ)</span>
+      </label>
+    </div>
+
+    <div class="btn-row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:18px">
+      <button type="button" class="btn-ghost" id="resetBtn">ล้างแบบฟอร์ม</button>
+      <button type="submit" id="submitBtn">ส่งใบสมัคร</button>
+    </div>
+  </form>
+
+  <div id="done" class="panel done hidden">
+    <h2>รับใบสมัครเรียบร้อยแล้ว</h2>
+    <p style="margin:0 auto">เลขสมาชิกของท่านคือ</p>
+    <div class="code" id="doneCode"></div>
+    <p style="margin:0 auto 18px">สถานะปัจจุบัน <b>รอตรวจสอบ</b> เจ้าหน้าที่จะตรวจสอบข้อมูลและออกบัตรสมาชิกให้ภายหลัง
+      กรุณาบันทึกเลขสมาชิกไว้เพื่อใช้ติดต่อสอบถาม</p>
+    <button class="btn-ghost" onclick="location.reload()">สมัครรายถัดไป</button>
+  </div>
+</div>
+
+<footer>
+  <?= SETTINGS.CLUB_NAME ?> · <?= SETTINGS.CLUB_ADDRESS ?><br>
+  โทร. <?= SETTINGS.CLUB_PHONE ?> · <?= SETTINGS.CLUB_EMAIL ?> ·
+  <a href="<?= WEBAPP_URL ?>?page=privacy">ประกาศความเป็นส่วนตัว</a>
+</footer>
+
+<script>
+var SETTINGS = <?!= JSON.stringify(SETTINGS) ?>;
+var MEMBER_TYPES = ['สามัญ','วิสามัญ','สมทบ','กิตติมศักดิ์'];
+var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด','สำนักงานสาธารณสุขอำเภอ','โรงพยาบาล',
+  'โรงพยาบาลส่งเสริมสุขภาพตำบล','องค์กรปกครองส่วนท้องถิ่น','สถานศึกษา','ภาคเอกชน','อื่น ๆ'];
+var photoData = '', signData = '', pad = null;
+
+document.addEventListener('DOMContentLoaded', function(){
+  if(SETTINGS.OPEN_REGISTER !== 'yes'){
+    document.getElementById('closed').classList.remove('hidden');
+    document.getElementById('form').classList.add('hidden');
+  }
+  fill('member_type', MEMBER_TYPES, 'สามัญ');
+  fill('work_type', WORK_TYPES, '');
+  document.getElementById('consentBox').innerHTML = consentHtml();
+  pad = SignaturePad(document.getElementById('pad'));
+
+  document.getElementById('national_id').addEventListener('input', onNid);
+  document.getElementById('photoFile').addEventListener('change', function(e){
+    readImage(e.target.files[0], 600, 800, .86).then(function(d){
+      photoData = d; setThumb('photoThumb', d, 'cover');
+    }).catch(function(err){ toast(err.message, true); });
+  });
+  document.getElementById('signFile').addEventListener('change', function(e){
+    readImage(e.target.files[0], 800, 300, .9).then(function(d){
+      signData = d; setThumb('signThumb', d, 'contain');
+    }).catch(function(err){ toast(err.message, true); });
+  });
+  document.getElementById('padClear').addEventListener('click', function(){ pad.clear(); });
+  document.getElementById('padUse').addEventListener('click', function(){
+    if(pad.isEmpty()) return toast('ยังไม่มีลายเซ็นบนช่องวาด', true);
+    signData = pad.toDataURL(); setThumb('signThumb', signData, 'contain'); toast('บันทึกลายเซ็นแล้ว');
+  });
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    if(confirm('ล้างข้อมูลทั้งหมดในแบบฟอร์ม?')) location.reload();
+  });
+  document.getElementById('form').addEventListener('submit', submit);
+});
+
+function fill(id, arr, def){
+  var s = document.getElementById(id);
+  arr.forEach(function(v){
+    var o = document.createElement('option'); o.textContent = v; o.value = v;
+    if(v===def) o.selected = true;
+    s.appendChild(o);
+  });
+}
+function setThumb(id, data, fit){
+  var el = document.getElementById(id);
+  el.innerHTML = '<img src="'+data+'" style="object-fit:'+fit+'" alt="">';
+}
+function onNid(e){
+  var v = e.target.value.replace(/\D/g,'').substring(0,13);
+  e.target.value = v.replace(/^(\d)(\d{0,4})(\d{0,5})(\d{0,2})(\d{0,1}).*/, function(_,a,b,c,d,f){
+    return [a,b,c,d,f].filter(Boolean).join(' ');
+  });
+  var help = document.getElementById('nidHelp');
+  if(v.length===13){
+    var ok = checkNid(v);
+    help.textContent = ok ? 'เลขประจำตัวประชาชนถูกต้อง' : 'เลขนี้ไม่ผ่านการตรวจสอบ กรุณาตรวจทานอีกครั้ง';
+    help.style.color = ok ? 'var(--ok)' : 'var(--danger)';
+  } else {
+    help.textContent = 'ใช้ยืนยันตัวตนและป้องกันข้อมูลซ้ำ จัดเก็บแบบเข้ารหัส';
+    help.style.color = '';
+  }
+}
+function checkNid(id){
+  if(!/^\d{13}$/.test(id)) return false;
+  var s=0; for(var i=0;i<12;i++) s += Number(id[i])*(13-i);
+  return (11-(s%11))%10 === Number(id[12]);
+}
+
+function submit(e){
+  e.preventDefault();
+  var nid = document.getElementById('national_id').value.replace(/\D/g,'');
+  if(!checkNid(nid)) return toast('เลขประจำตัวประชาชนไม่ถูกต้อง', true);
+  if(!document.getElementById('consent').checked) return toast('กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคล', true);
+
+  var payload = {
+    prefix: val('prefix'), first_name: val('first_name'), last_name: val('last_name'),
+    national_id: nid, birthdate: val('birthdate'), gender: val('gender'),
+    position: val('position'), organization: val('organization'), work_type: val('work_type'),
+    work_address: val('work_address'), phone: val('phone'), email: val('email'), line_id: val('line_id'),
+    member_type: val('member_type'), education: val('education'), license_no: val('license_no'),
+    photo_data: photoData, signature_data: signData,
+    consent: true, consent_marketing: document.getElementById('consent_marketing').checked
+  };
+
+  document.getElementById('submitBtn').disabled = true;
+  loading(true);
+  call('apiRegister', payload, clientInfo()).then(function(r){
+    loading(false);
+    document.getElementById('submitBtn').disabled = false;
+    if(!r.ok) return toast(r.error, true);
+    document.getElementById('form').classList.add('hidden');
+    document.getElementById('doneCode').textContent = r.member_code;
+    document.getElementById('done').classList.remove('hidden');
+    window.scrollTo(0,0);
+  }).catch(function(err){
+    loading(false);
+    document.getElementById('submitBtn').disabled = false;
+    toast(errText(err), true);
+  });
+}
+function val(id){ return (document.getElementById(id).value||'').trim(); }
+
+function consentHtml(){
+  return '' +
+  '<h4>ผู้ควบคุมข้อมูลส่วนบุคคล</h4>' +
+  '<p>'+esc(SETTINGS.CLUB_NAME)+' '+esc(SETTINGS.CLUB_ADDRESS)+' โทร. '+esc(SETTINGS.CLUB_PHONE)+'</p>' +
+  '<h4>ข้อมูลที่เก็บ</h4>' +
+  '<ul><li>ชื่อ-นามสกุล คำนำหน้า เพศ วันเกิด</li>' +
+  '<li>เลขประจำตัวประชาชน (ใช้ยืนยันตัวตนและป้องกันสมาชิกซ้ำ)</li>' +
+  '<li>ตำแหน่ง หน่วยงาน ที่อยู่หน่วยงาน วุฒิการศึกษา เลขใบอนุญาต</li>' +
+  '<li>โทรศัพท์ อีเมล ไลน์ไอดี</li><li>รูปถ่ายและลายเซ็นสำหรับพิมพ์บัตรสมาชิก</li></ul>' +
+  '<h4>วัตถุประสงค์</h4>' +
+  '<ul><li>พิจารณารับสมัครและจัดทำทะเบียนสมาชิก</li>' +
+  '<li>ออกบัตรสมาชิกและตรวจสอบสถานะสมาชิกผ่านคิวอาร์โค้ด</li>' +
+  '<li>ติดต่อเรื่องการประชุม อบรม และสิทธิประโยชน์ของสมาชิก</li>' +
+  '<li>จัดทำสถิติภาพรวมของชมรม (ไม่ระบุตัวบุคคล)</li></ul>' +
+  '<h4>ฐานการประมวลผล</h4>' +
+  '<p>ความยินยอมของท่าน และความจำเป็นเพื่อปฏิบัติตามสัญญาการเป็นสมาชิก ตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562</p>' +
+  '<h4>ระยะเวลาเก็บรักษา</h4>' +
+  '<p>ตลอดระยะเวลาการเป็นสมาชิก และเก็บต่ออีก '+esc(SETTINGS.RETENTION_YEARS)+' ปีนับแต่พ้นสมาชิกภาพ เพื่อการตรวจสอบย้อนหลัง จากนั้นจะลบหรือทำให้ไม่สามารถระบุตัวบุคคลได้</p>' +
+  '<h4>สิทธิของท่าน</h4>' +
+  '<p>ขอเข้าถึง ขอสำเนา ขอแก้ไขให้ถูกต้อง ขอลบ ขอระงับใช้ ขอคัดค้าน ขอให้โอนย้ายข้อมูล และถอนความยินยอม โดยติดต่อ '+
+  esc(SETTINGS.DPO_NAME)+' อีเมล '+esc(SETTINGS.DPO_EMAIL)+' โทร. '+esc(SETTINGS.DPO_PHONE)+
+  ' หากไม่ได้รับความเป็นธรรม ท่านมีสิทธิร้องเรียนต่อสำนักงานคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล</p>' +
+  '<h4>มาตรการความปลอดภัย</h4>' +
+  '<p>ข้อมูลอ่อนไหวถูกเข้ารหัสรายฟิลด์ก่อนจัดเก็บ กุญแจเก็บแยกจากฐานข้อมูล การเข้าถึงจำกัดเฉพาะเจ้าหน้าที่ที่ได้รับมอบหมาย และบันทึกประวัติการเข้าถึงทุกครั้ง</p>';
+}
+</script>
+</body>
+</html>

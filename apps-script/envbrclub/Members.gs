@@ -1,0 +1,567 @@
+/*************************************************************
+ * Members.gs : ข้อมูลสมาชิก
+ *  - รับสมัครผ่านหน้าเว็บสาธารณะ (สถานะ "รอตรวจสอบ")
+ *  - เพิ่ม / แก้ไข / เปลี่ยนสถานะ / ลบ โดยผู้ดูแล
+ *  - รูปถ่ายและลายเซ็นเก็บใน Google Drive โฟลเดอร์ส่วนตัวของระบบ
+ *  - บัตรสมาชิก + QR ตรวจสอบสถานะ
+ *************************************************************/
+
+var MEMBER_TYPES = ['สามัญ', 'วิสามัญ', 'สมทบ', 'กิตติมศักดิ์'];
+var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด', 'สำนักงานสาธารณสุขอำเภอ', 'โรงพยาบาล',
+  'โรงพยาบาลส่งเสริมสุขภาพตำบล', 'องค์กรปกครองส่วนท้องถิ่น', 'สถานศึกษา', 'ภาคเอกชน', 'อื่น ๆ'];
+
+/* =========================================================
+ * แปลงข้อมูลเข้า/ออกจากตาราง
+ * =======================================================*/
+function encodeMember_(m) {
+  var row = {};
+  M_COLS.forEach(function (c) { row[c] = m[c] === undefined || m[c] === null ? '' : m[c]; });
+  M_ENCRYPTED.forEach(function (f) { row[f] = encryptField_(m[f]); });
+  row.nid_idx = blindIndex_('nid', m.national_id);
+  row.phone_idx = blindIndex_('phone', m.phone);
+  row.email_idx = blindIndex_('email', m.email);
+  row.name_idx = blindIndex_('name', String(m.first_name || '') + ' ' + String(m.last_name || ''));
+  return row;
+}
+
+function decodeMember_(row) {
+  var m = { _row: row._row };
+  M_COLS.forEach(function (c) { m[c] = row[c]; });
+  M_ENCRYPTED.forEach(function (f) { m[f] = decryptField_(row[f]); });
+  return m;
+}
+
+function loadMembers_(includeDeleted) {
+  return readTable_(SHEETS.MEMBERS, M_COLS)
+    .filter(function (r) { return includeDeleted || r.status !== 'deleted'; })
+    .map(decodeMember_);
+}
+
+function findMemberById_(id, includeDeleted) {
+  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === String(id)) {
+      if (!includeDeleted && rows[i].status === 'deleted') return null;
+      return decodeMember_(rows[i]);
+    }
+  }
+  return null;
+}
+
+/* =========================================================
+ * เลขสมาชิก  รูปแบบ BR-<พ.ศ. 2 หลัก>-<ลำดับ 4 หลัก>
+ * =======================================================*/
+function nextMemberCode_() {
+  var year = Number(Utilities.formatDate(new Date(), APP.TZ, 'yyyy')) + 543;
+  var yy = String(year).substring(2);
+  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+  var max = 0;
+  rows.forEach(function (r) {
+    var m = String(r.member_code || '').match(/^BR-(\d{2})-(\d{4})$/);
+    if (m && m[1] === yy) max = Math.max(max, Number(m[2]));
+  });
+  return 'BR-' + yy + '-' + ('0000' + (max + 1)).slice(-4);
+}
+
+/* =========================================================
+ * ตรวจสอบข้อมูลนำเข้า
+ * =======================================================*/
+function cleanInput_(d) {
+  var out = {};
+  ['prefix', 'first_name', 'last_name', 'national_id', 'birthdate', 'gender', 'position',
+    'organization', 'work_type', 'work_address', 'phone', 'email', 'line_id', 'member_type',
+    'education', 'license_no', 'note', 'status', 'issue_date', 'expire_date'
+  ].forEach(function (k) {
+    if (d[k] !== undefined && d[k] !== null) out[k] = String(d[k]).trim().substring(0, 500);
+  });
+  if (out.national_id) out.national_id = out.national_id.replace(/\D/g, '');
+  if (out.phone) out.phone = out.phone.replace(/[^\d+]/g, '');
+  if (out.email) out.email = out.email.toLowerCase();
+  return out;
+}
+
+function validateMember_(d, existingId) {
+  var e = [];
+  if (!d.prefix) e.push('กรุณาเลือกคำนำหน้า');
+  if (!d.first_name) e.push('กรุณากรอกชื่อ');
+  if (!d.last_name) e.push('กรุณากรอกนามสกุล');
+  if (String(d.first_name || '').length > 60) e.push('ชื่อยาวเกิน 60 ตัวอักษร');
+  if (String(d.last_name || '').length > 60) e.push('นามสกุลยาวเกิน 60 ตัวอักษร');
+  if (!d.national_id) e.push('กรุณากรอกเลขประจำตัวประชาชน');
+  else if (!isValidThaiID_(d.national_id)) e.push('เลขประจำตัวประชาชนไม่ถูกต้อง');
+  if (!d.phone || d.phone.replace(/\D/g, '').length < 9) e.push('เบอร์โทรศัพท์ไม่ถูกต้อง');
+  if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) e.push('รูปแบบอีเมลไม่ถูกต้อง');
+  if (!d.position) e.push('กรุณากรอกตำแหน่ง');
+  if (!d.organization) e.push('กรุณากรอกหน่วยงาน');
+  if (String(d.organization || '').length > 120) e.push('ชื่อหน่วยงานยาวเกิน 120 ตัวอักษร');
+  if (d.member_type && MEMBER_TYPES.indexOf(d.member_type) < 0) e.push('ประเภทสมาชิกไม่ถูกต้อง');
+  if (d.birthdate && !/^\d{4}-\d{2}-\d{2}$/.test(d.birthdate)) e.push('รูปแบบวันเกิดไม่ถูกต้อง');
+
+  // กันเลขบัตรประชาชนซ้ำ โดยไม่ต้องถอดรหัสทั้งตาราง
+  if (d.national_id) {
+    var idx = blindIndex_('nid', d.national_id);
+    var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].nid_idx === idx && rows[i].status !== 'deleted' &&
+        String(rows[i].id) !== String(existingId || '')) {
+        e.push('เลขประจำตัวประชาชนนี้มีในระบบแล้ว (เลขสมาชิก ' + rows[i].member_code + ')');
+        break;
+      }
+    }
+  }
+  return e;
+}
+
+/* =========================================================
+ * ไฟล์รูปถ่าย / ลายเซ็น
+ * =======================================================*/
+function saveMedia_(dataUrl, prefix, memberCode) {
+  if (!dataUrl) return '';
+  var m = String(dataUrl).match(/^data:(image\/(png|jpeg|jpg|webp));base64,(.+)$/);
+  if (!m) throw new Error('ไฟล์รูปต้องเป็น PNG, JPG หรือ WEBP เท่านั้น');
+  var bytes = Utilities.base64Decode(m[3]);
+  if (bytes.length > APP.MAX_IMAGE_BYTES) throw new Error('ไฟล์รูปใหญ่เกิน 1.5 MB');
+  var folderId = PropertiesService.getScriptProperties().getProperty('MEDIA_FOLDER_ID');
+  var folder = DriveApp.getFolderById(folderId);
+  var ext = m[2] === 'jpeg' ? 'jpg' : m[2];
+  var blob = Utilities.newBlob(bytes, m[1], prefix + '_' + memberCode + '_' + new Date().getTime() + '.' + ext);
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+  return file.getId();
+}
+
+function deleteMedia_(fileId) {
+  if (!fileId) return;
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) { }
+}
+
+function mediaDataUrl_(fileId) {
+  if (!fileId) return '';
+  try {
+    var f = DriveApp.getFileById(fileId);
+    var b = f.getBlob();
+    return 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
+  } catch (e) { return ''; }
+}
+
+/* =========================================================
+ * สมัครสมาชิกผ่านหน้าเว็บ (สาธารณะ)
+ * =======================================================*/
+function apiRegister(payload, client) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var s = getSettings_();
+    if (s.OPEN_REGISTER !== 'yes') return { ok: false, error: 'ขณะนี้ปิดรับสมัครสมาชิกชั่วคราว' };
+
+    var d = cleanInput_(payload || {});
+    if (!payload || payload.consent !== true) {
+      return { ok: false, error: 'กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคลก่อนส่งใบสมัคร' };
+    }
+    var errs = validateMember_(d, null);
+    if (errs.length) return { ok: false, error: errs.join('\n') };
+
+    var code = nextMemberCode_();
+    var photoId = '', signId = '';
+    try {
+      photoId = saveMedia_(payload.photo_data, 'photo', code);
+      signId = saveMedia_(payload.signature_data, 'sign', code);
+    } catch (err) {
+      deleteMedia_(photoId); deleteMedia_(signId);
+      return { ok: false, error: err.message };
+    }
+
+    var today = fmtDate_(new Date());
+    var m = Object.assign({}, d, {
+      id: uuid_(),
+      member_code: code,
+      status: 'pending',
+      member_type: d.member_type || 'สามัญ',
+      photo_id: photoId,
+      signature_id: signId,
+      issue_date: '',
+      expire_date: '',
+      consent_version: APP.CONSENT_VERSION,
+      consent_at: now_(),
+      consent_marketing: payload.consent_marketing ? 'yes' : 'no',
+      verify_token: randomToken_(18),
+      created_at: now_(), created_by: 'สมัครผ่านเว็บ',
+      updated_at: now_(), updated_by: 'สมัครผ่านเว็บ'
+    });
+
+    appendRow_(SHEETS.MEMBERS, M_COLS, encodeMember_(m));
+    appendRow_(SHEETS.CONSENT, CONSENT_COLS, {
+      ts: now_(), member_id: m.id, member_code: code, consent_version: APP.CONSENT_VERSION,
+      purposes: 'การเป็นสมาชิก, การออกบัตร, การติดต่อ' + (m.consent_marketing === 'yes' ? ', ข่าวสาร/กิจกรรม' : ''),
+      channel: 'เว็บไซต์รับสมัคร', client: String(client || '').substring(0, 250)
+    });
+
+    writeLog_({ username: 'ผู้สมัคร', role: 'public' }, 'member.register', 'member', code,
+      'มีผู้สมัครสมาชิกใหม่ เลขสมาชิก ' + code + ' หน่วยงาน ' + (d.organization || '-'),
+      { member_code: code, organization: d.organization, position: d.position }, client);
+
+    return { ok: true, member_code: code, message: 'ส่งใบสมัครเรียบร้อย' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* =========================================================
+ * รายชื่อสมาชิก (ผู้ดูแล)
+ * =======================================================*/
+function apiListMembers(token, opt) {
+  var s = requireAuth_(token);
+  opt = opt || {};
+  var page = Math.max(1, Number(opt.page) || 1);
+  var size = Math.min(200, Number(opt.pageSize) || APP.PAGE_SIZE);
+  var all = loadMembers_(opt.includeDeleted && s.role === 'superadmin');
+
+  var q = String(opt.q || '').trim().toLowerCase();
+  var filtered = all.filter(function (m) {
+    if (opt.status && m.status !== opt.status) return false;
+    if (opt.member_type && m.member_type !== opt.member_type) return false;
+    if (opt.work_type && m.work_type !== opt.work_type) return false;
+    if (q) {
+      var hay = [m.member_code, m.prefix + m.first_name + ' ' + m.last_name, m.position,
+        m.organization, m.phone, m.email, m.national_id].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+
+  filtered.sort(function (a, b) {
+    var f = opt.sort || 'created_at';
+    var x = String(a[f] || ''), y = String(b[f] || '');
+    return opt.desc === false ? (x < y ? -1 : x > y ? 1 : 0) : (x > y ? -1 : x < y ? 1 : 0);
+  });
+
+  var total = filtered.length;
+  var items = filtered.slice((page - 1) * size, page * size).map(function (m) {
+    return {
+      id: m.id, member_code: m.member_code, status: m.status,
+      status_label: STATUS_LABELS[m.status] || m.status,
+      full_name: (m.prefix || '') + m.first_name + ' ' + m.last_name,
+      position: m.position, organization: m.organization, work_type: m.work_type,
+      member_type: m.member_type,
+      phone: canSeeSensitive_(s.role) ? m.phone : maskValue_('phone', m.phone),
+      email: canSeeSensitive_(s.role) ? m.email : maskValue_('email', m.email),
+      national_id: s.role === 'superadmin' ? m.national_id : maskValue_('national_id', m.national_id),
+      issue_date: m.issue_date, expire_date: m.expire_date,
+      has_photo: !!m.photo_id, has_sign: !!m.signature_id,
+      updated_at: m.updated_at, updated_by: m.updated_by
+    };
+  });
+
+  return { ok: true, total: total, page: page, pageSize: size, items: items, role: s.role };
+}
+
+function apiStats(token) {
+  requireAuth_(token);
+  var all = loadMembers_(false);
+  var byStatus = {}, byType = {}, byWork = {};
+  all.forEach(function (m) {
+    byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+    byType[m.member_type || 'ไม่ระบุ'] = (byType[m.member_type || 'ไม่ระบุ'] || 0) + 1;
+    byWork[m.work_type || 'ไม่ระบุ'] = (byWork[m.work_type || 'ไม่ระบุ'] || 0) + 1;
+  });
+  var soon = fmtDate_(new Date(new Date().getTime() + 60 * 86400000));
+  var expiring = all.filter(function (m) {
+    return m.status === 'active' && m.expire_date && m.expire_date <= soon;
+  }).length;
+  return {
+    ok: true, total: all.length, byStatus: byStatus, byType: byType, byWork: byWork,
+    expiringSoon: expiring, statusLabels: STATUS_LABELS
+  };
+}
+
+/* =========================================================
+ * ดูรายละเอียดสมาชิก
+ * =======================================================*/
+function apiGetMember(token, id) {
+  var s = requireAuth_(token);
+  var m = findMemberById_(id, s.role === 'superadmin');
+  if (!m) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+
+  if (canSeeSensitive_(s.role)) {
+    writeLog_(s, 'member.view_sensitive', 'member', m.member_code,
+      'เปิดดูข้อมูลส่วนบุคคลของสมาชิก ' + m.member_code, { id: m.id });
+  }
+
+  var out = {};
+  M_COLS.forEach(function (c) { out[c] = m[c]; });
+  if (!canSeeSensitive_(s.role)) {
+    out.national_id = maskValue_('national_id', m.national_id);
+    out.birthdate = ''; out.work_address = ''; out.line_id = '';
+    out.phone = maskValue_('phone', m.phone);
+    out.email = maskValue_('email', m.email);
+  } else if (s.role !== 'superadmin') {
+    out.national_id = maskValue_('national_id', m.national_id);
+  }
+  out.status_label = STATUS_LABELS[m.status] || m.status;
+  out.photo_url = m.photo_id ? mediaDataUrl_(m.photo_id) : '';
+  out.signature_url = m.signature_id ? mediaDataUrl_(m.signature_id) : '';
+  return { ok: true, member: out, role: s.role, meta: { types: MEMBER_TYPES, works: WORK_TYPES, statuses: STATUS_LABELS } };
+}
+
+/* =========================================================
+ * เพิ่มสมาชิกโดยผู้ดูแล
+ * =======================================================*/
+function apiCreateMember(token, data, client) {
+  var s = requireRole_(token, ['superadmin', 'admin']);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var d = cleanInput_(data || {});
+    var errs = validateMember_(d, null);
+    if (errs.length) return { ok: false, error: errs.join('\n') };
+
+    var code = nextMemberCode_();
+    var photoId = '', signId = '';
+    try {
+      photoId = saveMedia_(data.photo_data, 'photo', code);
+      signId = saveMedia_(data.signature_data, 'sign', code);
+    } catch (err) {
+      deleteMedia_(photoId); deleteMedia_(signId);
+      return { ok: false, error: err.message };
+    }
+
+    var status = (d.status && STATUS_LABELS[d.status] && d.status !== 'deleted') ? d.status : 'active';
+    var issue = d.issue_date || fmtDate_(new Date());
+    var m = Object.assign({}, d, {
+      id: uuid_(), member_code: code, status: status,
+      member_type: d.member_type || 'สามัญ',
+      photo_id: photoId, signature_id: signId,
+      issue_date: status === 'active' ? issue : '',
+      expire_date: status === 'active' ? (d.expire_date || addYears_(issue, APP.CARD_YEARS)) : '',
+      consent_version: APP.CONSENT_VERSION,
+      consent_at: now_(),
+      consent_marketing: data.consent_marketing ? 'yes' : 'no',
+      verify_token: randomToken_(18),
+      created_at: now_(), created_by: s.username,
+      updated_at: now_(), updated_by: s.username
+    });
+    appendRow_(SHEETS.MEMBERS, M_COLS, encodeMember_(m));
+    appendRow_(SHEETS.CONSENT, CONSENT_COLS, {
+      ts: now_(), member_id: m.id, member_code: code, consent_version: APP.CONSENT_VERSION,
+      purposes: 'บันทึกโดยเจ้าหน้าที่จากใบสมัครกระดาษ', channel: 'เจ้าหน้าที่บันทึก (' + s.username + ')',
+      client: String(client || '').substring(0, 250)
+    });
+    writeLog_(s, 'member.create', 'member', code,
+      'เพิ่มสมาชิกใหม่ ' + code + ' สถานะ ' + (STATUS_LABELS[status] || status),
+      { id: m.id, member_code: code, organization: d.organization }, client);
+    return { ok: true, id: m.id, member_code: code };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* =========================================================
+ * แก้ไขข้อมูลสมาชิก  (บันทึกทุกฟิลด์ที่เปลี่ยนลงประวัติ)
+ * =======================================================*/
+function apiUpdateMember(token, id, data, client) {
+  var s = requireRole_(token, ['superadmin', 'admin']);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var cur = findMemberById_(id, false);
+    if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+
+    var d = cleanInput_(data || {});
+    // ผู้ดูแลระดับ admin แก้เลขบัตรประชาชนไม่ได้ (ป้องกันแก้ค่าที่ถูกปกปิดทับของจริง)
+    if (s.role !== 'superadmin') delete d.national_id;
+    var merged = Object.assign({}, cur, d);
+
+    var errs = validateMember_(merged, cur.id);
+    if (errs.length) return { ok: false, error: errs.join('\n') };
+
+    // ไฟล์รูป
+    var mediaChanges = [];
+    if (data.photo_data) {
+      var newPhoto = saveMedia_(data.photo_data, 'photo', cur.member_code);
+      deleteMedia_(cur.photo_id);
+      merged.photo_id = newPhoto; mediaChanges.push('เปลี่ยนรูปถ่าย');
+    } else if (data.remove_photo) {
+      deleteMedia_(cur.photo_id); merged.photo_id = ''; mediaChanges.push('ลบรูปถ่าย');
+    }
+    if (data.signature_data) {
+      var newSign = saveMedia_(data.signature_data, 'sign', cur.member_code);
+      deleteMedia_(cur.signature_id);
+      merged.signature_id = newSign; mediaChanges.push('เปลี่ยนลายเซ็น');
+    } else if (data.remove_signature) {
+      deleteMedia_(cur.signature_id); merged.signature_id = ''; mediaChanges.push('ลบลายเซ็น');
+    }
+
+    // ปรับวันบัตรเมื่อเปลี่ยนสถานะเป็นสมาชิกปัจจุบัน
+    if (merged.status === 'active' && !merged.issue_date) {
+      merged.issue_date = fmtDate_(new Date());
+      merged.expire_date = merged.expire_date || addYears_(merged.issue_date, APP.CARD_YEARS);
+    }
+
+    var diffFields = ['prefix', 'first_name', 'last_name', 'national_id', 'birthdate', 'gender',
+      'position', 'organization', 'work_type', 'work_address', 'phone', 'email', 'line_id',
+      'member_type', 'education', 'license_no', 'status', 'issue_date', 'expire_date', 'note'];
+    var diff = diffMember_(cur, merged, diffFields);
+
+    if (!diff.length && !mediaChanges.length) return { ok: true, note: 'ไม่มีการเปลี่ยนแปลง' };
+
+    merged.updated_at = now_();
+    merged.updated_by = s.username;
+    updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(merged));
+
+    var parts = diff.map(function (x) { return x.label; }).concat(mediaChanges);
+    writeLog_(s, 'member.update', 'member', cur.member_code,
+      'แก้ไขข้อมูลสมาชิก ' + cur.member_code + ' : ' + parts.join(', '),
+      { id: cur.id, changes: diff, media: mediaChanges }, client);
+
+    return { ok: true, changed: parts };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* =========================================================
+ * เปลี่ยนสถานะ / ลบ
+ * =======================================================*/
+function apiSetStatus(token, id, status, reason, client) {
+  var s = requireRole_(token, ['superadmin', 'admin']);
+  if (!STATUS_LABELS[status] || status === 'deleted') return { ok: false, error: 'สถานะไม่ถูกต้อง' };
+  var cur = findMemberById_(id, false);
+  if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+  if (cur.status === status) return { ok: true, note: 'สถานะเดิมอยู่แล้ว' };
+
+  var next = Object.assign({}, cur, { status: status, updated_at: now_(), updated_by: s.username });
+  if (status === 'active' && !cur.issue_date) {
+    next.issue_date = fmtDate_(new Date());
+    next.expire_date = addYears_(next.issue_date, APP.CARD_YEARS);
+  }
+  updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
+  writeLog_(s, 'member.status', 'member', cur.member_code,
+    'เปลี่ยนสถานะ ' + cur.member_code + ' จาก "' + (STATUS_LABELS[cur.status] || cur.status) +
+    '" เป็น "' + STATUS_LABELS[status] + '"' + (reason ? ' เหตุผล: ' + reason : ''),
+    { id: cur.id, from: cur.status, to: status, reason: reason || '' }, client);
+  return { ok: true };
+}
+
+/** ลบเชิงตรรกะ : ยังเก็บข้อมูลไว้ตามระยะเวลาที่กำหนดในนโยบาย */
+function apiDeleteMember(token, id, reason, client) {
+  var s = requireRole_(token, ['superadmin', 'admin']);
+  var cur = findMemberById_(id, false);
+  if (!cur) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+  var next = Object.assign({}, cur, {
+    status: 'deleted', updated_at: now_(), updated_by: s.username
+  });
+  updateRow_(SHEETS.MEMBERS, M_COLS, cur._row, encodeMember_(next));
+  writeLog_(s, 'member.delete', 'member', cur.member_code,
+    'ลบสมาชิก ' + cur.member_code + (reason ? ' เหตุผล: ' + reason : ''),
+    { id: cur.id, reason: reason || '' }, client);
+  return { ok: true };
+}
+
+/** ลบถาวรตามสิทธิ์เจ้าของข้อมูล (มาตรา 33 PDPA) — เฉพาะผู้ดูแลสูงสุด */
+function apiPurgeMember(token, id, reason, client) {
+  var s = requireRole_(token, ['superadmin']);
+  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === String(id)) {
+      var m = decodeMember_(rows[i]);
+      deleteMedia_(m.photo_id); deleteMedia_(m.signature_id);
+      sheet_(SHEETS.MEMBERS).deleteRow(rows[i]._row);
+      writeLog_(s, 'member.purge', 'member', m.member_code,
+        'ลบข้อมูลสมาชิกถาวร ' + m.member_code + (reason ? ' เหตุผล: ' + reason : ''),
+        { member_code: m.member_code, reason: reason || '' }, client);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+}
+
+/* =========================================================
+ * บัตรสมาชิก
+ * =======================================================*/
+/** ผู้ดูแลขอโทเคนพิมพ์บัตร (อายุ 10 นาที ใช้เปิดหน้าบัตรในแท็บใหม่) */
+function apiIssuePrintToken(token, id, client) {
+  var s = requireRole_(token, ['superadmin', 'admin']);
+  var m = findMemberById_(id, false);
+  if (!m) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+  if (m.status !== 'active') {
+    return { ok: false, error: 'พิมพ์บัตรได้เฉพาะสมาชิกที่มีสถานะ "สมาชิกปัจจุบัน" — กรุณาอนุมัติสมาชิกก่อน' };
+  }
+  var pt = randomToken_(24);
+  CacheService.getScriptCache().put('PRINT:' + sha256b64_(pt),
+    JSON.stringify({ id: m.id, by: s.username, role: s.role, name: s.display_name }), 600);
+  writeLog_(s, 'member.card_print', 'member', m.member_code,
+    'เปิดพิมพ์บัตรสมาชิก ' + m.member_code, { id: m.id }, client);
+  return { ok: true, print_token: pt, url: getWebAppUrl_() + '?page=card&pt=' + encodeURIComponent(pt) };
+}
+
+/** ข้อมูลสำหรับหน้าบัตร (เรียกจากหน้า Card ด้วย print token) */
+function apiGetCardData(printToken) {
+  var raw = CacheService.getScriptCache().get('PRINT:' + sha256b64_(printToken || ''));
+  if (!raw) return { ok: false, error: 'ลิงก์พิมพ์บัตรหมดอายุแล้ว กรุณากดพิมพ์บัตรใหม่จากหน้าผู้ดูแล' };
+  var ctx = JSON.parse(raw);
+  var m = findMemberById_(ctx.id, false);
+  if (!m) return { ok: false, error: 'ไม่พบข้อมูลสมาชิก' };
+  var s = getSettings_();
+  return {
+    ok: true,
+    card: {
+      member_code: m.member_code,
+      prefix: m.prefix, first_name: m.first_name, last_name: m.last_name,
+      full_name: (m.prefix || '') + m.first_name + ' ' + m.last_name,
+      position: m.position, organization: m.organization,
+      member_type: m.member_type,
+      issue_date: m.issue_date, expire_date: m.expire_date,
+      photo: mediaDataUrl_(m.photo_id),
+      signature: mediaDataUrl_(m.signature_id),
+      verify_url: getWebAppUrl_() + '?page=verify&t=' + encodeURIComponent(m.verify_token)
+    },
+    club: {
+      name: s.CLUB_NAME, name_en: s.CLUB_NAME_EN, address: s.CLUB_ADDRESS,
+      phone: s.CLUB_PHONE, email: s.CLUB_EMAIL, note: s.CARD_NOTE,
+      president: s.PRESIDENT_NAME, president_title: s.PRESIDENT_TITLE,
+      president_sign: s.PRESIDENT_SIGN_ID ? mediaDataUrl_(s.PRESIDENT_SIGN_ID) : '',
+      logo: s.LOGO_ID ? mediaDataUrl_(s.LOGO_ID) : ''
+    },
+    printed_by: ctx.name || ctx.by
+  };
+}
+
+/* =========================================================
+ * ตรวจสอบสมาชิกผ่าน QR (สาธารณะ — เปิดเผยเท่าที่จำเป็น)
+ * =======================================================*/
+function apiVerify(t, client) {
+  var token = String(t || '').trim();
+  if (!token) return { ok: false, error: 'ไม่พบรหัสตรวจสอบ' };
+
+  var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].verify_token) === token) {
+      var m = decodeMember_(rows[i]);
+      if (m.status === 'deleted') break;
+      var expired = m.expire_date && m.expire_date < fmtDate_(new Date());
+      var status = expired && m.status === 'active' ? 'expired' : m.status;
+      writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', m.member_code,
+        'ตรวจสอบบัตรสมาชิก ' + m.member_code + ' ผลลัพธ์ ' + (STATUS_LABELS[status] || status),
+        { member_code: m.member_code, status: status }, client);
+      return {
+        ok: true,
+        valid: status === 'active',
+        data: {
+          member_code: m.member_code,
+          full_name: (m.prefix || '') + m.first_name + ' ' + m.last_name,
+          organization: m.organization,
+          position: m.position,
+          member_type: m.member_type,
+          status: status,
+          status_label: STATUS_LABELS[status] || status,
+          issue_date: m.issue_date,
+          expire_date: m.expire_date,
+          photo: m.photo_id ? mediaDataUrl_(m.photo_id) : ''
+        }
+      };
+    }
+  }
+  writeLog_({ username: 'ผู้ตรวจสอบ', role: 'public' }, 'member.card_verify', 'member', '-',
+    'ตรวจสอบบัตรด้วยรหัสที่ไม่มีในระบบ', {}, client);
+  return { ok: true, valid: false, notfound: true };
+}

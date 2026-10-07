@@ -1,0 +1,300 @@
+<!-- Shared.html : สไตล์และสคริปต์ที่ใช้ร่วมกันทุกหน้า -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ===== ระบบสี : เขียวนาข้าว + ศิลาแลงพนมรุ้ง ===== */
+:root{
+  --ink:#16261f;          /* หมึกเข้ม */
+  --ink-2:#4a5b52;        /* ข้อความรอง */
+  --ink-3:#7b8a82;        /* ข้อความจาง */
+  --paper:#f2f4ef;        /* พื้นหลัง */
+  --surface:#ffffff;
+  --line:#d7ded7;
+  --green:#14584a;        /* สีหลัก */
+  --green-d:#0d3f34;
+  --green-l:#dce9e1;
+  --laterite:#b4562a;     /* ศิลาแลง : ใช้เฉพาะคำเตือน/ตราสัญลักษณ์ */
+  --gold:#c08a2e;
+  --ok:#1d7a4f;
+  --warn:#a8730c;
+  --danger:#a32b1c;
+  --radius:10px;
+  --shadow:0 1px 2px rgba(22,38,31,.06), 0 8px 24px -16px rgba(22,38,31,.35);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:'Sarabun',-apple-system,'Segoe UI',sans-serif;
+  background:var(--paper); color:var(--ink);
+  font-size:16px; line-height:1.6; -webkit-text-size-adjust:100%;
+}
+h1,h2,h3,h4{margin:0 0 .5em; line-height:1.3; font-weight:600; letter-spacing:-.01em}
+h1{font-size:1.75rem} h2{font-size:1.3rem} h3{font-size:1.08rem}
+p{margin:0 0 1em; max-width:70ch}
+a{color:var(--green); text-underline-offset:3px}
+small{font-size:.82rem; color:var(--ink-2)}
+
+/* ===== โครงหน้า ===== */
+.wrap{max-width:960px; margin:0 auto; padding:0 18px}
+.topbar{background:var(--green); color:#fff; padding:14px 0}
+.topbar .wrap{display:flex; align-items:center; gap:14px; justify-content:space-between}
+.brand{display:flex; align-items:center; gap:12px; min-width:0}
+.seal{width:38px;height:38px;border-radius:50%;border:2px solid var(--gold);
+  display:grid;place-items:center;font-weight:700;font-size:.72rem;color:var(--gold);flex:none;letter-spacing:.02em}
+.brand b{display:block;font-weight:600;font-size:1rem;line-height:1.25}
+.brand span{font-size:.78rem;opacity:.8}
+
+/* ===== การ์ด/กล่อง ===== */
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:22px; margin-bottom:18px}
+.panel.tight{padding:16px}
+.section-title{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid var(--green-l);padding-bottom:8px;margin-bottom:18px}
+.section-title h2{margin:0}
+.section-title .hint{font-size:.85rem;color:var(--ink-3)}
+
+/* ===== ฟอร์ม ===== */
+.grid{display:grid; gap:14px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:720px){.g2,.g3,.g4{grid-template-columns:1fr}}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:.88rem;font-weight:500;color:var(--ink-2)}
+.field .req{color:var(--laterite)}
+input,select,textarea{
+  font-family:inherit;font-size:1rem;color:var(--ink);
+  padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%;
+}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--green);outline-offset:1px;border-color:var(--green)}
+input[readonly]{background:#f6f7f5;color:var(--ink-2)}
+textarea{min-height:80px;resize:vertical}
+.help{font-size:.8rem;color:var(--ink-3)}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:.94rem;line-height:1.55}
+.check input{width:20px;height:20px;flex:none;margin-top:2px;accent-color:var(--green)}
+
+/* ===== ปุ่ม ===== */
+button,.btn{
+  font-family:inherit;font-size:.95rem;font-weight:600;cursor:pointer;
+  padding:10px 18px;border-radius:8px;border:1px solid transparent;background:var(--green);color:#fff;
+  display:inline-flex;align-items:center;gap:8px;justify-content:center;text-decoration:none;
+}
+button:hover{background:var(--green-d)}
+button:disabled{opacity:.55;cursor:not-allowed}
+button:focus-visible,a:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.btn-ghost{background:transparent;color:var(--green);border-color:var(--line)}
+.btn-ghost:hover{background:var(--green-l)}
+.btn-danger{background:var(--danger)} .btn-danger:hover{background:#7d1f13}
+.btn-sm{padding:6px 12px;font-size:.85rem}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+/* ===== ตาราง ===== */
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-weight:600;color:var(--ink-2);background:#f7f9f6;white-space:nowrap;position:sticky;top:0}
+tbody tr:hover{background:#fafbf9}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ===== ป้ายสถานะ ===== */
+.tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:.8rem;font-weight:600;white-space:nowrap}
+.tag.active{background:#dff0e6;color:var(--ok)}
+.tag.pending{background:#fbf0d8;color:var(--warn)}
+.tag.suspended{background:#f7e3de;color:var(--laterite)}
+.tag.expired{background:#eceeeb;color:var(--ink-2)}
+.tag.revoked{background:#f6dcd8;color:var(--danger)}
+.tag.deleted{background:#e6e8e5;color:var(--ink-3)}
+
+/* ===== แจ้งเตือน ===== */
+.note{padding:14px 16px;border-radius:8px;border-left:4px solid var(--green);background:var(--green-l);margin-bottom:16px;font-size:.93rem}
+.note.warn{border-color:var(--warn);background:#fdf5e3}
+.note.err{border-color:var(--danger);background:#faeae7;color:#6d1a10}
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(140%);
+  background:var(--ink);color:#fff;padding:12px 20px;border-radius:8px;z-index:9999;
+  max-width:90vw;box-shadow:var(--shadow);transition:transform .22s ease;font-size:.93rem}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast.err{background:var(--danger)}
+#loading{position:fixed;inset:0;background:rgba(242,244,239,.72);display:none;place-items:center;z-index:9998}
+#loading.on{display:grid}
+.spin{width:34px;height:34px;border:3px solid var(--green-l);border-top-color:var(--green);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2s} #toast{transition:none}}
+
+/* ===== หน้าต่างซ้อน ===== */
+.modal{position:fixed;inset:0;background:rgba(22,38,31,.5);display:none;z-index:9000;overflow-y:auto;padding:24px 12px}
+.modal.on{display:block}
+.modal-box{background:var(--surface);max-width:860px;margin:0 auto;border-radius:12px;padding:24px;box-shadow:var(--shadow)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.x{background:none;color:var(--ink-2);font-size:1.4rem;padding:2px 10px;border:none}
+.x:hover{background:#eee}
+
+/* ===== รูปถ่าย/ลายเซ็น ===== */
+.media-box{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.thumb{width:118px;height:150px;border:1px dashed var(--line);border-radius:8px;background:#fbfcfa;
+  display:grid;place-items:center;overflow:hidden;color:var(--ink-3);font-size:.8rem;text-align:center;flex:none}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.thumb.sign{height:74px;width:200px}
+.thumb.sign img{object-fit:contain;background:#fff}
+.pad-wrap{border:1px solid var(--line);border-radius:8px;background:#fff;display:inline-block;touch-action:none}
+canvas.pad{display:block;border-radius:8px;cursor:crosshair}
+
+footer{padding:28px 0;color:var(--ink-3);font-size:.83rem;text-align:center}
+.hidden{display:none !important}
+@media print{.no-print{display:none !important}}
+</style>
+
+<script>
+/* ================= ตัวช่วยเรียก server ================= */
+function call(fn){
+  var args = Array.prototype.slice.call(arguments,1);
+  return new Promise(function(res,rej){
+    var r = google.script.run
+      .withSuccessHandler(res)
+      .withFailureHandler(function(e){ rej(e); });
+    r[fn].apply(r,args);
+  });
+}
+function clientInfo(){
+  try{ return navigator.userAgent + ' | ' + screen.width + 'x' + screen.height + ' | ' + Intl.DateTimeFormat().resolvedOptions().timeZone; }
+  catch(e){ return 'unknown'; }
+}
+function toast(msg, isErr){
+  var t = document.getElementById('toast');
+  if(!t){ t=document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.className = 'show' + (isErr?' err':'');
+  clearTimeout(window.__tt); window.__tt=setTimeout(function(){ t.className=''; }, isErr?6000:3200);
+}
+function loading(on){
+  var l = document.getElementById('loading');
+  if(!l){ l=document.createElement('div'); l.id='loading'; l.innerHTML='<div class="spin"></div>'; document.body.appendChild(l); }
+  l.className = on ? 'on' : '';
+}
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function errText(e){
+  var m = (e && e.message) ? e.message : String(e||'เกิดข้อผิดพลาด');
+  if(m.indexOf('AUTH:')===0) return m.substring(5);
+  if(m.indexOf('PERM:')===0) return m.substring(5);
+  return m;
+}
+function isAuthError(e){ return e && e.message && e.message.indexOf('AUTH:')===0; }
+
+/* ================= วันที่แบบไทย ================= */
+var TH_MON = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+function thaiDate(iso, full){
+  if(!iso) return '-';
+  var p = String(iso).substring(0,10).split('-');
+  if(p.length<3) return iso;
+  var y = Number(p[0])+543;
+  return Number(p[2]) + ' ' + TH_MON[Number(p[1])-1] + ' ' + (full? y : String(y).substring(2));
+}
+function thaiDateTime(s){
+  if(!s) return '-';
+  return thaiDate(s,true) + ' ' + String(s).substring(11,16) + ' น.';
+}
+
+/* ================= ย่อรูปฝั่งผู้ใช้ก่อนอัปโหลด ================= */
+function readImage(file, maxW, maxH, quality){
+  return new Promise(function(res, rej){
+    if(!file) return res('');
+    if(!/^image\//.test(file.type)) return rej(new Error('กรุณาเลือกไฟล์รูปภาพ'));
+    var fr = new FileReader();
+    fr.onerror = function(){ rej(new Error('อ่านไฟล์ไม่สำเร็จ')); };
+    fr.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var r = Math.min(maxW/img.width, maxH/img.height, 1);
+        var w = Math.round(img.width*r), h = Math.round(img.height*r);
+        var cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+        var cx = cv.getContext('2d');
+        cx.fillStyle='#fff'; cx.fillRect(0,0,w,h);
+        cx.drawImage(img,0,0,w,h);
+        res(cv.toDataURL('image/jpeg', quality||0.85));
+      };
+      img.onerror = function(){ rej(new Error('ไฟล์รูปเสียหาย')); };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+/* ================= ดาวน์โหลดไฟล์จาก base64 ================= */
+function downloadBase64(b64, filename, mime){
+  var bin = atob(b64), len = bin.length, buf = new Uint8Array(len);
+  for(var i=0;i<len;i++) buf[i] = bin.charCodeAt(i);
+  var blob = new Blob([buf], {type: mime});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = filename; a.rel='noopener';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+/* ================= แผ่นวาดลายเซ็น ================= */
+function SignaturePad(canvas){
+  var cx = canvas.getContext('2d');
+  var drawing=false, dirty=false, last=null;
+  function resize(){
+    var ratio = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w*ratio; canvas.height = h*ratio;
+    cx.scale(ratio,ratio);
+    cx.fillStyle='#fff'; cx.fillRect(0,0,w,h);
+    cx.lineWidth=2.2; cx.lineCap='round'; cx.lineJoin='round'; cx.strokeStyle='#16261f';
+  }
+  function pos(e){
+    var r = canvas.getBoundingClientRect();
+    var t = e.touches ? e.touches[0] : e;
+    return {x:t.clientX-r.left, y:t.clientY-r.top};
+  }
+  function start(e){ e.preventDefault(); drawing=true; dirty=true; last=pos(e); }
+  function move(e){
+    if(!drawing) return; e.preventDefault();
+    var p=pos(e); cx.beginPath(); cx.moveTo(last.x,last.y); cx.lineTo(p.x,p.y); cx.stroke(); last=p;
+  }
+  function end(){ drawing=false; }
+  ['mousedown','touchstart'].forEach(function(ev){ canvas.addEventListener(ev,start,{passive:false}); });
+  ['mousemove','touchmove'].forEach(function(ev){ canvas.addEventListener(ev,move,{passive:false}); });
+  ['mouseup','mouseleave','touchend','touchcancel'].forEach(function(ev){ canvas.addEventListener(ev,end); });
+  resize();
+  return {
+    clear:function(){ resize(); dirty=false; },
+    isEmpty:function(){ return !dirty; },
+    toDataURL:function(){ return dirty ? canvas.toDataURL('image/png') : ''; }
+  };
+}
+
+/* ================= ย่อขนาดตัวอักษรให้พอดีกรอบ (ห้ามตัดข้อความ) ================= */
+/* วัดจากขนาดจริงของกล่อง แล้วลดขนาดฟอนต์ทีละ 0.25px จนกว่าข้อความจะไม่ล้น */
+function fitText(el, maxPx, minPx, allowWrap){
+  if(!el) return;
+  el.style.whiteSpace = allowWrap ? 'normal' : 'nowrap';
+  el.style.overflow = 'hidden';
+  var size = maxPx, guard = 0;
+  el.style.fontSize = size + 'px';
+  el.style.letterSpacing = '0';
+  function overflow(){
+    return el.scrollWidth > el.clientWidth + 0.6 || el.scrollHeight > el.clientHeight + 0.6;
+  }
+  while(overflow() && size > minPx && guard++ < 400){
+    size -= 0.25;
+    el.style.fontSize = size.toFixed(2) + 'px';
+  }
+  /* ถ้าเล็กสุดแล้วยังล้น บีบระยะห่างตัวอักษรเล็กน้อยแทนการตัดข้อความ */
+  var ls = 0;
+  while(overflow() && ls - 0.05 >= -0.6 && guard++ < 500){
+    ls -= 0.05;
+    el.style.letterSpacing = ls.toFixed(2) + 'px';
+  }
+  el.dataset.fitted = size.toFixed(2);
+}
+function fitAll(list){
+  var run = function(){ list.forEach(function(c){ fitText(document.querySelector(c.sel), c.max, c.min, c.wrap); }); };
+  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(function(){ setTimeout(run, 30); }); }
+  else { setTimeout(run, 250); }
+  return run;
+}
+</script>

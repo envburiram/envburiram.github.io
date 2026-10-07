@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('Shared') ?>
+<style>
+  .shell{max-width:520px;margin:0 auto;padding:22px 16px 40px}
+  .result{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+  .banner{padding:20px;color:#fff;display:flex;gap:14px;align-items:center}
+  .banner.ok{background:var(--ok)} .banner.no{background:var(--danger)} .banner.warn{background:var(--warn)}
+  .banner .mark{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-size:1.5rem;flex:none}
+  .banner b{display:block;font-size:1.12rem}
+  .banner span{font-size:.86rem;opacity:.92}
+  .who{display:flex;gap:16px;padding:20px}
+  .who .ph{width:92px;height:118px;border-radius:8px;overflow:hidden;background:#f1f3f0;flex:none;display:grid;place-items:center;color:var(--ink-3);font-size:.75rem}
+  .who .ph img{width:100%;height:100%;object-fit:cover}
+  .who h2{margin:0 0 4px;font-size:1.24rem}
+  dl.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;margin:14px 0 0;font-size:.92rem;padding:0 20px 20px}
+  dl.kv dt{color:var(--ink-2)} dl.kv dd{margin:0;font-weight:600}
+  .foot-note{font-size:.82rem;color:var(--ink-3);padding:16px 20px;border-top:1px solid var(--line);background:#fafbf9}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand">
+      <div class="seal">ชอส<br>บร</div>
+      <div><b><?= SETTINGS.CLUB_NAME ?></b><span>ตรวจสอบสถานะสมาชิก</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+  <div id="out"><p style="color:var(--ink-3)">กำลังตรวจสอบ…</p></div>
+</div>
+
+<footer>
+  <?= SETTINGS.CLUB_NAME ?> · โทร. <?= SETTINGS.CLUB_PHONE ?><br>
+  หน้านี้แสดงข้อมูลเท่าที่จำเป็นต่อการยืนยันสถานะสมาชิกเท่านั้น
+</footer>
+
+<script>
+var T = <?!= JSON.stringify(PARAMS.t || '') ?>;
+var CLUB_PHONE = <?!= JSON.stringify(SETTINGS.CLUB_PHONE) ?>;
+document.addEventListener('DOMContentLoaded', function(){
+  if(!T){ return show(banner('no','ไม่พบรหัสตรวจสอบ','กรุณาสแกนคิวอาร์โค้ดด้านหลังบัตรอีกครั้ง')); }
+  call('apiVerify', T, clientInfo()).then(function(r){
+    if(!r.ok) return show(banner('no','ตรวจสอบไม่สำเร็จ', r.error||''));
+    if(r.notfound || !r.data){
+      return show(banner('no','ไม่พบบัตรนี้ในระบบ','บัตรอาจถูกยกเลิก หรือคิวอาร์โค้ดไม่ถูกต้อง'));
+    }
+    var d = r.data;
+    var kind = r.valid ? 'ok' : (d.status==='expired' ? 'warn' : 'no');
+    var head = r.valid ? 'บัตรสมาชิกใช้งานได้'
+             : (d.status==='expired' ? 'บัตรหมดอายุแล้ว' : 'บัตรนี้ไม่มีผลใช้งาน');
+    var sub  = r.valid ? 'ข้อมูลตรงกับทะเบียนสมาชิกของชมรม' : 'สถานะปัจจุบัน: ' + d.status_label;
+
+    var html = '<div class="result">' + bannerInner(kind, head, sub) +
+      '<div class="who">' +
+        '<div class="ph">' + (d.photo ? '<img src="'+d.photo+'" alt="">' : 'ไม่มีรูป') + '</div>' +
+        '<div><h2>'+esc(d.full_name)+'</h2>' +
+        '<div style="color:var(--ink-2);font-size:.92rem">'+esc(d.position||'-')+'</div>' +
+        '<div style="color:var(--ink-2);font-size:.92rem">'+esc(d.organization||'-')+'</div></div>' +
+      '</div>' +
+      '<dl class="kv">' +
+        row('เลขสมาชิก', d.member_code) +
+        row('ประเภทสมาชิก', d.member_type||'-') +
+        row('สถานะ', '<span class="tag '+esc(d.status)+'">'+esc(d.status_label)+'</span>') +
+        row('วันออกบัตร', thaiDate(d.issue_date,true)) +
+        row('บัตรหมดอายุ', thaiDate(d.expire_date,true)) +
+      '</dl>' +
+      '<div class="foot-note">ตรวจสอบเมื่อ ' + new Date().toLocaleString('th-TH') +
+      ' · หากพบการใช้บัตรโดยมิชอบ กรุณาแจ้งชมรมที่ ' + esc(CLUB_PHONE) + '</div>' +
+      '</div>';
+    show(html);
+  }).catch(function(e){ show(banner('no','ตรวจสอบไม่สำเร็จ', errText(e))); });
+});
+
+function row(k,v){ return '<dt>'+esc(k)+'</dt><dd>'+v+'</dd>'; }
+function bannerInner(kind, head, sub){
+  var mark = kind==='ok' ? '✓' : (kind==='warn' ? '!' : '×');
+  return '<div class="banner '+kind+'"><div class="mark">'+mark+'</div>'+
+    '<div><b>'+esc(head)+'</b><span>'+esc(sub)+'</span></div></div>';
+}
+function banner(kind, head, sub){ return '<div class="result">'+bannerInner(kind,head,sub)+'</div>'; }
+function show(html){ document.getElementById('out').innerHTML = html; }
+</script>
+</body>
+</html>

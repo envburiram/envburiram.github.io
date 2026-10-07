@@ -1,0 +1,231 @@
+/*************************************************************
+ * Crypto.gs : การเข้ารหัสข้อมูลส่วนบุคคล
+ *
+ * มาตรฐานที่ใช้
+ *  - เข้ารหัสรายฟิลด์แบบ stream cipher จาก HMAC-SHA256 (โหมดนับ)
+ *    แล้วผนวก MAC แบบ Encrypt-then-MAC (HMAC-SHA256 ตัด 128 บิต)
+ *  - กุญแจหลัก 256 บิต เก็บใน Script Properties แยกจากฐานข้อมูล
+ *    (ผู้ที่เห็นสเปรดชีตแต่ไม่มีสิทธิ์สคริปต์ จะอ่านข้อมูลไม่ได้)
+ *  - แตกกุญแจย่อยด้วย HMAC (enc / mac / idx) ไม่ใช้กุญแจเดียวหลายหน้าที่
+ *  - Blind index : HMAC ของค่าที่ปรับรูปแล้ว ใช้ค้นหา/กันซ้ำโดยไม่ต้องถอดรหัส
+ *  - รหัสผ่านผู้ดูแล : PBKDF2-HMAC-SHA256 พร้อม salt เฉพาะบัญชี
+ *
+ * รูปแบบข้อความเข้ารหัส : v1:<iv b64>:<ciphertext b64>:<tag b64>
+ *************************************************************/
+
+var CRYPTO_CFG = { VERSION: 'v1', IV_LEN: 16, TAG_LEN: 16, PBKDF2_ITER: 12000 };
+
+/* ---------- กุญแจ ---------- */
+function cryptoGetMasterKey_() {
+  if (cryptoGetMasterKey_._k) return cryptoGetMasterKey_._k;
+  var props = PropertiesService.getScriptProperties();
+  var b64 = props.getProperty('MASTER_KEY_B64');
+  if (!b64) {
+    b64 = Utilities.base64Encode(cryptoRandomBytes_(32));
+    props.setProperty('MASTER_KEY_B64', b64);
+    props.setProperty('MASTER_KEY_CREATED', new Date().toISOString());
+  }
+  cryptoGetMasterKey_._k = Utilities.base64Decode(b64);
+  return cryptoGetMasterKey_._k;
+}
+
+function cryptoSubKey_(label) {
+  var c = cryptoSubKey_._c || (cryptoSubKey_._c = {});
+  if (c[label]) return c[label];
+  c[label] = Utilities.computeHmacSha256Signature(strBytes_('BREH-KDF|' + label), cryptoGetMasterKey_());
+  return c[label];
+}
+
+/* ---------- ตัวช่วยระดับไบต์ ---------- */
+function strBytes_(s) { return Utilities.newBlob(String(s)).getBytes(); }
+function bytesStr_(b) { return Utilities.newBlob(b).getDataAsString('UTF-8'); }
+function signed_(n) { n = n & 0xff; return n > 127 ? n - 256 : n; }
+
+function cryptoRandomBytes_(n) {
+  var out = [];
+  while (out.length < n) {
+    var seed = Utilities.getUuid() + '|' + Utilities.getUuid() + '|' +
+      new Date().getTime() + '|' + Math.random();
+    out = out.concat(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, seed, Utilities.Charset.UTF_8));
+  }
+  return out.slice(0, n);
+}
+
+function intBytes_(i) {
+  return [signed_((i >> 24) & 0xff), signed_((i >> 16) & 0xff), signed_((i >> 8) & 0xff), signed_(i & 0xff)];
+}
+
+function keystream_(key, iv, len) {
+  var out = [], counter = 0;
+  while (out.length < len) {
+    out = out.concat(Utilities.computeHmacSha256Signature(iv.concat(intBytes_(counter)), key));
+    counter++;
+  }
+  return out.slice(0, len);
+}
+
+function xorBytes_(a, b) {
+  var out = new Array(a.length);
+  for (var i = 0; i < a.length; i++) out[i] = signed_((a[i] & 0xff) ^ (b[i] & 0xff));
+  return out;
+}
+
+/** เทียบไบต์แบบเวลาคงที่ ป้องกัน timing attack */
+function constEq_(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= (a[i] & 0xff) ^ (b[i] & 0xff);
+  return diff === 0;
+}
+
+/* ---------- เข้ารหัส / ถอดรหัส ---------- */
+function encryptField_(plain) {
+  if (plain === null || plain === undefined || plain === '') return '';
+  var data = strBytes_(plain);
+  var iv = cryptoRandomBytes_(CRYPTO_CFG.IV_LEN);
+  var ct = xorBytes_(data, keystream_(cryptoSubKey_('enc'), iv, data.length));
+  var tag = Utilities.computeHmacSha256Signature(iv.concat(ct), cryptoSubKey_('mac')).slice(0, CRYPTO_CFG.TAG_LEN);
+  return CRYPTO_CFG.VERSION + ':' + Utilities.base64Encode(iv) + ':' +
+    Utilities.base64Encode(ct) + ':' + Utilities.base64Encode(tag);
+}
+
+function decryptField_(cipher) {
+  if (cipher === null || cipher === undefined || cipher === '') return '';
+  var s = String(cipher);
+  if (s.indexOf(CRYPTO_CFG.VERSION + ':') !== 0) return s;   // ข้อมูลเดิมที่ยังไม่เข้ารหัส
+  var parts = s.split(':');
+  if (parts.length !== 4) return '';
+  try {
+    var iv = Utilities.base64Decode(parts[1]);
+    var ct = Utilities.base64Decode(parts[2]);
+    var tag = Utilities.base64Decode(parts[3]);
+    var expect = Utilities.computeHmacSha256Signature(iv.concat(ct), cryptoSubKey_('mac')).slice(0, CRYPTO_CFG.TAG_LEN);
+    if (!constEq_(tag, expect)) return '[ข้อมูลถูกแก้ไข]';
+    return bytesStr_(xorBytes_(ct, keystream_(cryptoSubKey_('enc'), iv, ct.length)));
+  } catch (e) {
+    return '[ถอดรหัสไม่สำเร็จ]';
+  }
+}
+
+/* ---------- Blind index : ค้นหา/กันซ้ำโดยไม่ถอดรหัส ---------- */
+function normalizeForIndex_(kind, v) {
+  v = String(v === null || v === undefined ? '' : v).trim();
+  if (!v) return '';
+  if (kind === 'nid' || kind === 'phone') return v.replace(/\D/g, '');
+  if (kind === 'email') return v.toLowerCase();
+  return v.toLowerCase().replace(/\s+/g, ' ');
+}
+
+function blindIndex_(kind, value) {
+  var v = normalizeForIndex_(kind, value);
+  if (!v) return '';
+  return Utilities.base64Encode(
+    Utilities.computeHmacSha256Signature(strBytes_(kind + '|' + v), cryptoSubKey_('idx'))
+  ).substring(0, 24);
+}
+
+/* ---------- โทเคนสุ่มปลอดภัย ---------- */
+function randomToken_(bytes) {
+  return Utilities.base64EncodeWebSafe(cryptoRandomBytes_(bytes || 24)).replace(/=+$/, '');
+}
+
+function sha256b64_(s) {
+  // ใช้รูปแบบ web-safe เพราะค่านี้ถูกใช้เป็นคีย์ของ CacheService ด้วย
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(s), Utilities.Charset.UTF_8)).replace(/=+$/, '');
+}
+
+/* ---------- รหัสผ่าน (PBKDF2-HMAC-SHA256) ---------- */
+function pbkdf2_(password, saltBytes, iterations) {
+  var pw = strBytes_(password);
+  var u = Utilities.computeHmacSha256Signature(saltBytes.concat([0, 0, 0, 1]), pw);
+  var out = u.slice();
+  for (var i = 1; i < iterations; i++) {
+    u = Utilities.computeHmacSha256Signature(u, pw);
+    for (var j = 0; j < out.length; j++) out[j] = signed_((out[j] & 0xff) ^ (u[j] & 0xff));
+  }
+  return out;
+}
+
+function hashPassword_(password, saltB64, iter) {
+  iter = iter || CRYPTO_CFG.PBKDF2_ITER;
+  var salt = saltB64 ? Utilities.base64Decode(saltB64) : cryptoRandomBytes_(16);
+  var dk = pbkdf2_(password, salt, iter);
+  return {
+    hash: Utilities.base64Encode(dk),
+    salt: Utilities.base64Encode(salt),
+    iter: iter
+  };
+}
+
+function verifyPassword_(password, hashB64, saltB64, iter) {
+  var calc = pbkdf2_(password, Utilities.base64Decode(saltB64), Number(iter) || CRYPTO_CFG.PBKDF2_ITER);
+  return constEq_(calc, Utilities.base64Decode(hashB64));
+}
+
+/* ---------- ตรวจสอบความถูกต้องของระบบเข้ารหัส ---------- */
+function selfTestCrypto() {
+  var samples = ['1234567890123', 'สมชาย ใจดี', 'test@example.com', '', 'ที่อยู่ 99/1 ต.ในเมือง อ.เมือง จ.บุรีรัมย์'];
+  var pass = true, report = [];
+  samples.forEach(function (s) {
+    var c = encryptField_(s);
+    var d = decryptField_(c);
+    var ok = d === s;
+    pass = pass && ok;
+    report.push((ok ? 'ผ่าน' : 'ไม่ผ่าน') + ' : "' + s + '" -> ' + (c ? c.substring(0, 28) + '…' : '(ว่าง)'));
+  });
+  var h = hashPassword_('P@ssw0rd-ทดสอบ');
+  var okPw = verifyPassword_('P@ssw0rd-ทดสอบ', h.hash, h.salt, h.iter) &&
+    !verifyPassword_('ผิด', h.hash, h.salt, h.iter);
+  report.push((okPw ? 'ผ่าน' : 'ไม่ผ่าน') + ' : ตรวจรหัสผ่าน PBKDF2');
+  report.push('blind index 1234567890123 = ' + blindIndex_('nid', '1-2345-67890-12-3'));
+  var out = report.join('\n') + '\n\nสรุป : ' + (pass && okPw ? 'ระบบเข้ารหัสทำงานปกติ' : 'พบข้อผิดพลาด');
+  Logger.log(out);
+  return out;
+}
+
+/*************************************************************
+ * การหมุนกุญแจ (Key rotation) — ใช้เมื่อสงสัยว่ากุญแจรั่วไหล
+ * ขั้นตอน : สำรองสเปรดชีต > เรียก rotateEncryptionKey() > ตรวจข้อมูล
+ *************************************************************/
+function rotateEncryptionKey() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('ระบบกำลังทำงานอื่นอยู่ ลองใหม่อีกครั้ง');
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var oldKeyB64 = props.getProperty('MASTER_KEY_B64');
+    if (!oldKeyB64) throw new Error('ยังไม่มีกุญแจในระบบ');
+
+    // 1) อ่านและถอดรหัสด้วยกุญแจเดิม
+    var rows = readTable_(SHEETS.MEMBERS, M_COLS);
+    var plain = rows.map(function (r) {
+      var o = { _row: r._row };
+      M_ENCRYPTED.forEach(function (f) { o[f] = decryptField_(r[f]); });
+      return o;
+    });
+
+    // 2) เปลี่ยนกุญแจ
+    props.setProperty('MASTER_KEY_PREV_B64', oldKeyB64);
+    props.setProperty('MASTER_KEY_B64', Utilities.base64Encode(cryptoRandomBytes_(32)));
+    props.setProperty('MASTER_KEY_CREATED', new Date().toISOString());
+    cryptoGetMasterKey_._k = null; cryptoSubKey_._c = null;
+
+    // 3) เข้ารหัสใหม่ทั้งหมด
+    var sh = sheet_(SHEETS.MEMBERS);
+    plain.forEach(function (p) {
+      M_ENCRYPTED.forEach(function (f) {
+        sh.getRange(p._row, M_COLS.indexOf(f) + 1).setValue(encryptField_(p[f]));
+      });
+      // blind index ต้องคำนวณใหม่ด้วยเพราะกุญแจ idx เปลี่ยน
+      sh.getRange(p._row, M_COLS.indexOf('nid_idx') + 1).setValue(blindIndex_('nid', p.national_id));
+      sh.getRange(p._row, M_COLS.indexOf('phone_idx') + 1).setValue(blindIndex_('phone', p.phone));
+      sh.getRange(p._row, M_COLS.indexOf('email_idx') + 1).setValue(blindIndex_('email', p.email));
+    });
+
+    writeLog_({ username: 'ระบบ', role: 'system' }, 'security.key_rotate', 'system', '-',
+      'หมุนกุญแจเข้ารหัสฐานข้อมูล (' + plain.length + ' ระเบียน)', { records: plain.length });
+    return 'หมุนกุญแจสำเร็จ ' + plain.length + ' ระเบียน';
+  } finally {
+    lock.releaseLock();
+  }
+}

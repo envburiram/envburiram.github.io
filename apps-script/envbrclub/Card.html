@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('Shared') ?>
+<style id="pageStyle">
+  @page { size: 85.6mm 53.98mm; margin: 0; }
+</style>
+<style>
+  body{background:#e7ebe6}
+  .bar{background:var(--green);color:#fff;padding:12px 0}
+  .bar .wrap{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  .bar .btn-ghost{color:#fff;border-color:rgba(255,255,255,.45)}
+  .stage-wrap{padding:26px 12px;display:flex;flex-direction:column;align-items:center;gap:26px}
+  .zoom{transform:scale(2.1);transform-origin:top center;margin-bottom:250px}
+  @media(max-width:760px){.zoom{transform:scale(1.05);margin-bottom:0}}
+
+  /* ============ บัตรขนาดจริง CR80 : 85.6 x 53.98 มม. ============ */
+  .card{
+    width:85.6mm;height:53.98mm;background:#fff;position:relative;overflow:hidden;
+    font-family:'Sarabun',sans-serif;color:var(--ink);
+    box-shadow:0 2px 10px rgba(0,0,0,.18);
+  }
+  .card *{box-sizing:border-box}
+
+  /* ---- ด้านหน้า ---- */
+  .head{height:11mm;background:var(--green);color:#fff;display:flex;align-items:center;gap:2mm;padding:0 3mm;
+    border-bottom:0.8mm solid var(--gold)}
+  .head .logo{width:8mm;height:8mm;border-radius:50%;background:#fff;flex:none;display:grid;place-items:center;overflow:hidden}
+  .head .logo img{width:100%;height:100%;object-fit:contain}
+  .head .logo span{font-size:6.5px;font-weight:700;color:var(--green);text-align:center;line-height:1.05}
+  .head .titles{min-width:0;flex:1}
+  .head .th{font-weight:700;font-size:10px;height:3.6mm;line-height:3.6mm;white-space:nowrap;overflow:hidden}
+  .head .en{font-size:6px;opacity:.85;letter-spacing:.04em;height:2.4mm;line-height:2.4mm;white-space:nowrap;overflow:hidden}
+  .head .type{font-size:7px;background:rgba(255,255,255,.16);border:0.2mm solid rgba(255,255,255,.5);
+    border-radius:1mm;padding:0.4mm 1.4mm;flex:none;white-space:nowrap}
+
+  .body{display:flex;gap:2.6mm;padding:2.4mm 3mm 0}
+  .photo{width:20mm;height:26mm;flex:none;border:0.25mm solid var(--line);border-radius:0.8mm;overflow:hidden;
+    background:#f4f6f3;display:grid;place-items:center;color:#aab3ac;font-size:6px;text-align:center}
+  .photo img{width:100%;height:100%;object-fit:cover}
+  .info{flex:1;min-width:0;padding-top:0.4mm}
+  .lbl{font-size:5.6px;color:#8a958e;letter-spacing:.02em;margin-bottom:0.2mm}
+
+  /* กล่องที่ต้องย่อตัวอักษรให้พอดี ห้ามตัดข้อความ */
+  .c-name{height:5.4mm;line-height:5.4mm;font-weight:700;font-size:16px;overflow:hidden}
+  .c-name.two{height:7mm;line-height:3.5mm;word-break:break-word}   /* ชื่อยาวมาก: ใช้สองบรรทัดแทนการตัดข้อความ */
+  .c-position{height:3.4mm;line-height:3.4mm;font-size:9px;color:var(--ink-2);overflow:hidden}
+  .c-org{height:6.6mm;line-height:3.3mm;font-size:9px;font-weight:600;color:var(--green-d);overflow:hidden;
+    display:block;word-break:break-word}
+  .meta{display:flex;gap:3mm;margin-top:1mm}
+  .meta div{min-width:0}
+  .meta .k{font-size:5.6px;color:#8a958e}
+  .meta .v{font-size:8px;font-weight:600;white-space:nowrap}
+
+  .foot{position:absolute;left:3mm;right:3mm;bottom:1.6mm;display:flex;align-items:flex-end;
+    justify-content:space-between;gap:2mm;border-top:0.2mm solid var(--line);padding-top:0.8mm}
+  .code{font-size:11px;font-weight:700;color:var(--green-d);letter-spacing:.03em;line-height:1}
+  .code small{display:block;font-size:5.6px;font-weight:400;color:#8a958e;letter-spacing:0}
+  .sig{text-align:center;width:26mm}
+  .sig .line{height:5mm;display:grid;place-items:center;overflow:hidden}
+  .sig .line img{max-height:5mm;max-width:100%;object-fit:contain}
+  .sig .cap{font-size:5.4px;color:#8a958e;border-top:0.2mm solid var(--line);padding-top:0.4mm}
+
+  /* ---- ด้านหลัง ---- */
+  .back{padding:3mm;display:flex;flex-direction:column;height:100%}
+  .back-top{display:flex;gap:3mm}
+  .qr{width:21mm;height:21mm;flex:none;border:0.25mm solid var(--line);border-radius:1mm;padding:0.6mm;background:#fff;display:grid;place-items:center}
+  .qr img,.qr canvas{width:100% !important;height:100% !important;display:block}
+  .qr-side{flex:1;min-width:0}
+  .qr-side h4{margin:0 0 0.6mm;font-size:8.5px;color:var(--green-d)}
+  .qr-side p{margin:0;font-size:6.4px;line-height:1.45;color:var(--ink-2);max-width:none}
+  .b-addr-label{font-size:5.8px;color:#8a958e;margin-top:1.6mm}
+  .b-address{height:7.2mm;line-height:2.4mm;font-size:7px;overflow:hidden;word-break:break-word}
+  .b-note{height:4.6mm;line-height:2.3mm;font-size:6.4px;color:var(--ink-2);overflow:hidden;margin-top:0.8mm}
+  .back-foot{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;gap:2mm}
+  .pres{text-align:center;width:34mm}
+  .pres .line{height:6mm;display:grid;place-items:center;overflow:hidden}
+  .pres .line img{max-height:6mm;max-width:100%;object-fit:contain}
+  .pres .nm{font-size:6.4px;font-weight:600;border-top:0.2mm solid var(--line);padding-top:0.4mm;
+    white-space:nowrap;overflow:hidden}
+  .pres .ti{font-size:5.4px;color:#8a958e;white-space:nowrap;overflow:hidden}
+  .serial{font-size:5.6px;color:#a4aca6}
+
+  /* ---- การพิมพ์ ---- */
+  @media print{
+    body{background:#fff}
+    .no-print{display:none !important}
+    .stage-wrap{padding:0;gap:0}
+    .zoom{transform:none;margin:0}
+    .card{box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+    .card + .card{page-break-before:always}
+  }
+  @media screen{ #backCard{margin-top:14px} }
+  body.a4 .card{border:0.2mm dashed #bbb}
+  @media print{ body.a4 .card + .card{page-break-before:auto;margin-top:8mm} }
+  body.a4 .stage-wrap{align-items:flex-start;padding:10mm}
+  body.a4 .zoom{transform:none}
+</style>
+</head>
+<body>
+
+<div class="bar no-print">
+  <div class="wrap">
+    <div><b>บัตรสมาชิก</b> <span id="who" style="opacity:.85;font-size:.86rem"></span></div>
+    <div class="btn-row">
+      <label class="check" style="color:#fff;font-size:.85rem;align-items:center">
+        <input type="checkbox" id="a4mode"> <span>พิมพ์ลงกระดาษ A4</span>
+      </label>
+      <button class="btn-ghost" onclick="window.close()">ปิดหน้าต่าง</button>
+      <button id="printBtn">พิมพ์ / บันทึกเป็น PDF</button>
+    </div>
+  </div>
+</div>
+
+<div id="msg" class="wrap no-print" style="padding-top:20px"></div>
+
+<div class="stage-wrap">
+  <div class="zoom" id="zoom" style="display:none">
+    <!-- ============ ด้านหน้า ============ -->
+    <div class="card" id="front">
+      <div class="head">
+        <div class="logo" id="logo"><span>ชอส<br>บร</span></div>
+        <div class="titles">
+          <div class="th" id="clubName"></div>
+          <div class="en" id="clubNameEn"></div>
+        </div>
+        <div class="type" id="mType"></div>
+      </div>
+      <div class="body">
+        <div class="photo" id="photo">ไม่มีรูปถ่าย</div>
+        <div class="info">
+          <div class="lbl">ชื่อ-นามสกุล</div>
+          <div class="c-name" id="cName"></div>
+          <div class="lbl" style="margin-top:0.6mm">ตำแหน่ง</div>
+          <div class="c-position" id="cPos"></div>
+          <div class="lbl" style="margin-top:0.4mm">หน่วยงาน</div>
+          <div class="c-org" id="cOrg"></div>
+          <div class="meta">
+            <div><div class="k">วันออกบัตร</div><div class="v" id="issue"></div></div>
+            <div><div class="k">บัตรหมดอายุ</div><div class="v" id="expire"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="code" id="code"><small>เลขสมาชิก</small></div>
+        <div class="sig">
+          <div class="line" id="memberSign"></div>
+          <div class="cap">ลายมือชื่อสมาชิก</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ ด้านหลัง ============ -->
+    <div class="card" id="backCard">
+      <div class="back">
+        <div class="back-top">
+          <div class="qr" id="qr"></div>
+          <div class="qr-side">
+            <h4>ตรวจสอบสถานะสมาชิก</h4>
+            <p>สแกนคิวอาร์โค้ดเพื่อตรวจสอบว่าบัตรนี้ยังมีผลอยู่หรือไม่
+               ระบบจะแสดงเลขสมาชิก ชื่อ หน่วยงาน และวันหมดอายุ</p>
+            <div class="b-addr-label">สำนักงานชมรม</div>
+            <div class="b-address" id="bAddr"></div>
+          </div>
+        </div>
+        <div class="b-note" id="bNote"></div>
+        <div class="back-foot">
+          <div class="serial" id="serial"></div>
+          <div class="pres">
+            <div class="line" id="presSign"></div>
+            <div class="nm" id="presName"></div>
+            <div class="ti" id="presTitle"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+var PT = <?!= JSON.stringify(PARAMS.pt || '') ?>;
+var DATA = null;
+
+document.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('printBtn').addEventListener('click', function(){ window.print(); });
+  document.getElementById('a4mode').addEventListener('change', function(e){
+    document.body.classList.toggle('a4', e.target.checked);
+    document.getElementById('pageStyle').textContent = e.target.checked
+      ? '@page { size: A4 portrait; margin: 10mm; }'
+      : '@page { size: 85.6mm 53.98mm; margin: 0; }';
+  });
+
+  if(!PT){ return fail('ไม่พบรหัสสำหรับพิมพ์บัตร กรุณาเปิดจากหน้าผู้ดูแลระบบ'); }
+  loading(true);
+  call('apiGetCardData', PT).then(function(r){
+    loading(false);
+    if(!r.ok) return fail(r.error);
+    DATA = r; render(r);
+  }).catch(function(e){ loading(false); fail(errText(e)); });
+});
+
+function fail(m){
+  document.getElementById('msg').innerHTML = '<div class="note err">'+esc(m)+'</div>';
+}
+
+function render(r){
+  var c = r.card, k = r.club;
+  document.getElementById('who').textContent = 'พิมพ์โดย ' + (r.printed_by||'-');
+  document.getElementById('clubName').textContent = k.name;
+  document.getElementById('clubNameEn').textContent = k.name_en;
+  document.getElementById('mType').textContent = 'สมาชิก' + (c.member_type||'สามัญ');
+  if(k.logo) document.getElementById('logo').innerHTML = '<img src="'+k.logo+'">';
+
+  document.getElementById('photo').innerHTML = c.photo ? '<img src="'+c.photo+'">' : 'ไม่มีรูปถ่าย';
+  document.getElementById('cName').textContent = c.full_name;
+  document.getElementById('cPos').textContent = c.position || '-';
+  document.getElementById('cOrg').textContent = c.organization || '-';
+  document.getElementById('issue').textContent = thaiDate(c.issue_date, true);
+  document.getElementById('expire').textContent = thaiDate(c.expire_date, true);
+  document.getElementById('code').innerHTML = '<small>เลขสมาชิก</small>' + esc(c.member_code);
+  if(c.signature) document.getElementById('memberSign').innerHTML = '<img src="'+c.signature+'">';
+
+  document.getElementById('bAddr').textContent = k.address;
+  document.getElementById('bNote').textContent = k.note + '  โทร. ' + k.phone + '  ' + k.email;
+  document.getElementById('serial').textContent = c.member_code;
+  document.getElementById('presName').textContent = k.president;
+  document.getElementById('presTitle').textContent = k.president_title;
+  if(k.president_sign) document.getElementById('presSign').innerHTML = '<img src="'+k.president_sign+'">';
+
+  makeQR(c.verify_url);
+  document.getElementById('zoom').style.display = '';
+
+  /* ย่อขนาดตัวอักษรให้พอดีกรอบบัตร โดยไม่ตัดข้อความ */
+  var runOthers = fitAll([
+    {sel:'#clubName',  max:11,  min:5.5, wrap:false},
+    {sel:'#clubNameEn',max:7,   min:4,   wrap:false},
+    {sel:'#cPos',      max:9.5, min:5.5, wrap:false},
+    {sel:'#cOrg',      max:10,  min:5.5, wrap:true},
+    {sel:'#bAddr',     max:8,   min:4.5, wrap:true},
+    {sel:'#bNote',     max:7,   min:4.5, wrap:true},
+    {sel:'#presName',  max:7.5, min:4.5, wrap:false},
+    {sel:'#presTitle', max:6,   min:4,   wrap:false}
+  ]);
+  var run = function(){ runOthers(); fitName(); };
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ setTimeout(fitName, 40); });
+  window.addEventListener('beforeprint', run);
+  setTimeout(run, 800);   /* วัดซ้ำหลังรูปและฟอนต์โหลดครบ */
+}
+
+/* ชื่อ-นามสกุล : ลองบรรทัดเดียวก่อน ถ้ายังล้นจึงใช้สองบรรทัด เพื่อไม่ให้ข้อความถูกตัด */
+function fitName(){
+  var el = document.getElementById('cName');
+  if(!el) return;
+  el.classList.remove('two');
+  fitText(el, 17, 8, false);
+  if(el.scrollWidth > el.clientWidth + 0.6){
+    el.classList.add('two');
+    el.style.letterSpacing = '0';
+    fitText(el, 12, 6, true);
+  }
+}
+
+function makeQR(url){
+  var box = document.getElementById('qr');
+  box.innerHTML = '';
+  try{
+    new QRCode(box, {text:url, width:260, height:260, correctLevel: QRCode.CorrectLevel.M});
+  }catch(e){}
+  setTimeout(function(){
+    if(!box.querySelector('img') && !box.querySelector('canvas')){
+      var img = document.createElement('img');
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=0&data=' + encodeURIComponent(url);
+      img.alt = 'คิวอาร์โค้ดตรวจสอบสมาชิก';
+      box.appendChild(img);
+    }
+  }, 900);
+}
+</script>
+</body>
+</html>

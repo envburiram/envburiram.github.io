@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('Shared') ?>
+<style>
+  .wrap{max-width:1180px}
+  .login-shell{min-height:100vh;display:grid;place-items:center;padding:24px}
+  .login-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:32px;width:100%;max-width:400px;box-shadow:var(--shadow)}
+  .login-card .seal{width:52px;height:52px;font-size:.9rem;border-color:var(--green);color:var(--green);margin-bottom:16px}
+  .layout{display:grid;grid-template-columns:212px 1fr;gap:22px;padding:22px 18px;max-width:1180px;margin:0 auto;align-items:start}
+  @media(max-width:860px){.layout{grid-template-columns:1fr;padding:14px}}
+  .rail{position:sticky;top:16px;display:flex;flex-direction:column;gap:2px}
+  @media(max-width:860px){.rail{position:static;flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:6px}}
+  .rail button{background:none;color:var(--ink-2);border:none;justify-content:flex-start;padding:10px 14px;border-radius:8px;font-weight:500;white-space:nowrap}
+  .rail button:hover{background:var(--green-l);color:var(--green-d)}
+  .rail button.on{background:var(--green);color:#fff}
+  .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat b{display:block;font-size:1.7rem;font-weight:700;line-height:1.1;color:var(--green-d)}
+  .stat span{font-size:.85rem;color:var(--ink-2)}
+  .stat.alert b{color:var(--laterite)}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+  .toolbar .field{flex:1;min-width:180px}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:14px;font-size:.9rem;color:var(--ink-2)}
+  .row-actions{display:flex;gap:6px;white-space:nowrap}
+  .log-item{border-bottom:1px solid var(--line);padding:12px 2px}
+  .log-item .meta{font-size:.82rem;color:var(--ink-3);display:flex;gap:10px;flex-wrap:wrap}
+  .log-item .what{font-weight:600;margin:2px 0}
+  .chg{font-size:.86rem;color:var(--ink-2);background:#f7f9f6;border-radius:6px;padding:6px 10px;margin-top:6px}
+  .chg code{color:var(--laterite);font-family:inherit}
+  dl.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.93rem;margin:0}
+  dl.kv dt{color:var(--ink-2)}
+  dl.kv dd{margin:0;font-weight:500}
+</style>
+</head>
+<body>
+
+<!-- ================= เข้าสู่ระบบ ================= -->
+<div id="loginView" class="login-shell">
+  <form class="login-card" id="loginForm">
+    <div class="seal">ชอส<br>บร</div>
+    <h2>ผู้ดูแลระบบ</h2>
+    <p style="font-size:.9rem;color:var(--ink-2)"><?= SETTINGS.CLUB_NAME ?></p>
+    <div class="field" style="margin-bottom:12px">
+      <label for="u">ชื่อผู้ใช้</label>
+      <input id="u" autocomplete="username" required>
+    </div>
+    <div class="field" style="margin-bottom:18px">
+      <label for="p">รหัสผ่าน</label>
+      <input id="p" type="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" style="width:100%" id="loginBtn">เข้าสู่ระบบ</button>
+    <p style="font-size:.82rem;color:var(--ink-3);margin:16px 0 0">
+      การเข้าใช้งานทุกครั้งถูกบันทึกไว้ในระบบตามนโยบายความปลอดภัย
+      ห้ามใช้บัญชีร่วมกับผู้อื่น</p>
+  </form>
+</div>
+
+<!-- ================= หน้าหลัก ================= -->
+<div id="appView" class="hidden">
+  <div class="topbar">
+    <div class="wrap">
+      <div class="brand">
+        <div class="seal">ชอส<br>บร</div>
+        <div><b><?= SETTINGS.CLUB_NAME ?></b><span>ระบบทะเบียนสมาชิก</span></div>
+      </div>
+      <div class="btn-row">
+        <span style="font-size:.86rem;opacity:.9" id="meLabel"></span>
+        <button class="btn-sm btn-ghost" style="color:#fff;border-color:rgba(255,255,255,.4)" id="pwBtn">เปลี่ยนรหัสผ่าน</button>
+        <button class="btn-sm btn-ghost" style="color:#fff;border-color:rgba(255,255,255,.4)" id="outBtn">ออกจากระบบ</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="rail" id="rail">
+      <button data-tab="members" class="on">ทะเบียนสมาชิก</button>
+      <button data-tab="add">เพิ่มสมาชิก</button>
+      <button data-tab="logs">ประวัติการแก้ไข</button>
+      <button data-tab="export">ส่งออกข้อมูล</button>
+      <button data-tab="admins" class="su-only">บัญชีผู้ดูแล</button>
+      <button data-tab="settings" class="su-only">ตั้งค่าชมรม</button>
+    </nav>
+
+    <main>
+      <!-- ---------- ทะเบียนสมาชิก ---------- -->
+      <section id="tab-members">
+        <div class="stat-row" id="stats"></div>
+        <div class="panel">
+          <div class="toolbar">
+            <div class="field">
+              <label for="q">ค้นหา</label>
+              <input id="q" placeholder="ชื่อ นามสกุล เลขสมาชิก หน่วยงาน หรือเบอร์โทร">
+            </div>
+            <div class="field" style="flex:0 0 170px">
+              <label for="fstatus">สถานะ</label>
+              <select id="fstatus"><option value="">ทั้งหมด</option></select>
+            </div>
+            <div class="field" style="flex:0 0 160px">
+              <label for="ftype">ประเภทสมาชิก</label>
+              <select id="ftype"><option value="">ทั้งหมด</option></select>
+            </div>
+            <button id="searchBtn">ค้นหา</button>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th>เลขสมาชิก</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง / หน่วยงาน</th>
+                <th>ประเภท</th><th>สถานะ</th><th>บัตรหมดอายุ</th><th></th>
+              </tr></thead>
+              <tbody id="mbody"><tr><td colspan="7" style="color:var(--ink-3)">กำลังโหลด…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <span id="pageInfo"></span>
+            <button class="btn-ghost btn-sm" id="prevBtn">ก่อนหน้า</button>
+            <button class="btn-ghost btn-sm" id="nextBtn">ถัดไป</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- เพิ่มสมาชิก ---------- -->
+      <section id="tab-add" class="hidden">
+        <div class="panel">
+          <div class="section-title"><h2>เพิ่มสมาชิกใหม่</h2>
+            <span class="hint">ใช้เมื่อรับใบสมัครกระดาษ ระบบจะออกเลขสมาชิกให้อัตโนมัติ</span></div>
+          <div id="addForm"></div>
+          <div class="btn-row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:16px;margin-top:16px">
+            <button class="btn-ghost" id="addClear">ล้างฟอร์ม</button>
+            <button id="addSave">บันทึกสมาชิก</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- ประวัติ ---------- -->
+      <section id="tab-logs" class="hidden">
+        <div class="panel">
+          <div class="section-title"><h2>ประวัติการใช้งานและการแก้ไข</h2>
+            <span class="hint">บันทึกว่าใครแก้อะไร เมื่อไร ค่าเดิมและค่าใหม่</span></div>
+          <div class="toolbar">
+            <div class="field"><label for="lq">ค้นหา</label><input id="lq" placeholder="ชื่อผู้ใช้ เลขสมาชิก หรือข้อความ"></div>
+            <div class="field" style="flex:0 0 210px"><label for="laction">เหตุการณ์</label>
+              <select id="laction"><option value="">ทั้งหมด</option></select></div>
+            <div class="field" style="flex:0 0 150px"><label for="lfrom">ตั้งแต่วันที่</label><input id="lfrom" type="date"></div>
+            <div class="field" style="flex:0 0 150px"><label for="lto">ถึงวันที่</label><input id="lto" type="date"></div>
+            <button id="logSearch">ค้นหา</button>
+          </div>
+          <div id="logList"></div>
+          <div class="pager">
+            <span id="logInfo"></span>
+            <button class="btn-ghost btn-sm" id="logPrev">ก่อนหน้า</button>
+            <button class="btn-ghost btn-sm" id="logNext">ถัดไป</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- ส่งออก ---------- -->
+      <section id="tab-export" class="hidden">
+        <div class="panel">
+          <div class="section-title"><h2>ส่งออกข้อมูล</h2><span class="hint">ไฟล์ Excel (.xlsx) หรือ CSV</span></div>
+          <div class="note">การส่งออกทุกครั้งถูกบันทึกในประวัติการใช้งาน กรุณาเก็บไฟล์ในเครื่องที่มีการป้องกัน และลบเมื่อใช้งานเสร็จ</div>
+          <div class="grid g3">
+            <div class="field"><label for="xtype">ชุดข้อมูล</label>
+              <select id="xtype"><option value="members">ทะเบียนสมาชิก</option><option value="logs">ประวัติการใช้งาน</option></select></div>
+            <div class="field"><label for="xstatus">สถานะสมาชิก</label>
+              <select id="xstatus"><option value="">ทั้งหมด</option></select></div>
+            <div class="field"><label for="xq">คำค้น</label><input id="xq" placeholder="เว้นว่างเพื่อส่งออกทั้งหมด"></div>
+          </div>
+          <label class="check su-only" style="margin-top:16px">
+            <input type="checkbox" id="xfull">
+            <span>รวมเลขประจำตัวประชาชนแบบเต็ม <b style="color:var(--laterite)">(เอกสารลับ)</b>
+              ใช้เฉพาะกรณีจำเป็นตามภารกิจ และต้องทำลายไฟล์เมื่อเสร็จสิ้น</span>
+          </label>
+          <div class="btn-row" style="margin-top:18px">
+            <button id="xExcel">ดาวน์โหลด Excel</button>
+            <button class="btn-ghost" id="xCsv">ดาวน์โหลด CSV</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- ผู้ดูแล ---------- -->
+      <section id="tab-admins" class="hidden">
+        <div class="panel">
+          <div class="section-title"><h2>บัญชีผู้ดูแล</h2><span class="hint">superadmin ทำได้ทุกอย่าง · admin จัดการสมาชิก · viewer ดูอย่างเดียว</span></div>
+          <div class="table-scroll">
+            <table><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อ-สกุล</th><th>สิทธิ์</th><th>สถานะ</th><th>เข้าใช้ล่าสุด</th><th></th></tr></thead>
+            <tbody id="abody"></tbody></table>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>เพิ่มบัญชีใหม่</h3>
+          <div class="grid g2">
+            <div class="field"><label for="nu">ชื่อผู้ใช้</label><input id="nu" placeholder="a-z 0-9 . _ -"></div>
+            <div class="field"><label for="nn">ชื่อ-สกุลผู้ใช้งาน</label><input id="nn"></div>
+            <div class="field"><label for="ne">อีเมล</label><input id="ne" type="email"></div>
+            <div class="field"><label for="nr">สิทธิ์</label><select id="nr">
+              <option value="viewer">viewer</option><option value="admin">admin</option><option value="superadmin">superadmin</option></select></div>
+            <div class="field"><label for="np">รหัสผ่านเริ่มต้น</label><input id="np" type="text" placeholder="อย่างน้อย 10 ตัว มีตัวอักษรและตัวเลข"></div>
+          </div>
+          <div class="btn-row" style="margin-top:14px"><button id="addAdmin">สร้างบัญชี</button></div>
+        </div>
+      </section>
+
+      <!-- ---------- ตั้งค่า ---------- -->
+      <section id="tab-settings" class="hidden">
+        <div class="panel">
+          <div class="section-title"><h2>ตั้งค่าชมรม</h2><span class="hint">ข้อความเหล่านี้แสดงบนบัตรสมาชิกและหน้าเว็บ</span></div>
+          <div id="setForm" class="grid"></div>
+          <div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button id="setSave">บันทึกการตั้งค่า</button></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ================= หน้าต่างแก้ไขสมาชิก ================= -->
+<div class="modal" id="editModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div><h2 id="editTitle" style="margin:0">แก้ไขข้อมูลสมาชิก</h2><small id="editSub"></small></div>
+      <button class="x" data-close="editModal">&times;</button>
+    </div>
+    <div id="editForm"></div>
+    <div class="btn-row" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:16px;margin-top:16px">
+      <div class="btn-row">
+        <button class="btn-ghost" id="printBtn">พิมพ์บัตรสมาชิก</button>
+        <button class="btn-danger btn-sm" id="delBtn">ลบสมาชิก</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn-ghost" data-close="editModal">ปิด</button>
+        <button id="saveBtn">บันทึกการแก้ไข</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= หน้าต่างเปลี่ยนรหัสผ่าน ================= -->
+<div class="modal" id="pwModal">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-head"><h2 style="margin:0">เปลี่ยนรหัสผ่าน</h2><button class="x" data-close="pwModal">&times;</button></div>
+    <div id="pwForce" class="note warn hidden">ระบบกำหนดให้เปลี่ยนรหัสผ่านก่อนใช้งานครั้งแรก</div>
+    <div class="grid">
+      <div class="field"><label for="op">รหัสผ่านเดิม</label><input id="op" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="n1">รหัสผ่านใหม่</label><input id="n1" type="password" autocomplete="new-password">
+        <span class="help">อย่างน้อย 10 ตัวอักษร ประกอบด้วยตัวอักษรและตัวเลข</span></div>
+      <div class="field"><label for="n2">ยืนยันรหัสผ่านใหม่</label><input id="n2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button id="pwSave">บันทึกรหัสผ่านใหม่</button></div>
+  </div>
+</div>
+
+<script>
+var WEBAPP_URL = <?!= JSON.stringify(WEBAPP_URL) ?>;
+var TOKEN = sessionStorage.getItem('br_token') || '';
+var ME = null, PAGE = 1, LOGPAGE = 1, CURRENT = null, ACTIONS = {};
+var STATUSES = {pending:'รอตรวจสอบ',active:'สมาชิกปัจจุบัน',suspended:'ระงับชั่วคราว',expired:'หมดอายุ',revoked:'พ้นสมาชิกภาพ'};
+var MEMBER_TYPES = ['สามัญ','วิสามัญ','สมทบ','กิตติมศักดิ์'];
+var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด','สำนักงานสาธารณสุขอำเภอ','โรงพยาบาล',
+  'โรงพยาบาลส่งเสริมสุขภาพตำบล','องค์กรปกครองส่วนท้องถิ่น','สถานศึกษา','ภาคเอกชน','อื่น ๆ'];
+var SET_LABELS = {
+  CLUB_NAME:'ชื่อชมรม', CLUB_NAME_EN:'ชื่อภาษาอังกฤษ (บนบัตร)', CLUB_ADDRESS:'ที่อยู่ชมรม (หลังบัตร)',
+  CLUB_PHONE:'โทรศัพท์', CLUB_EMAIL:'อีเมล', PRESIDENT_NAME:'ชื่อประธานชมรม', PRESIDENT_TITLE:'ตำแหน่งประธาน',
+  PRESIDENT_SIGN_ID:'รหัสไฟล์ลายเซ็นประธาน (Drive File ID)', LOGO_ID:'รหัสไฟล์ตราชมรม (Drive File ID)',
+  DPO_NAME:'ผู้ประสานงานข้อมูลส่วนบุคคล', DPO_EMAIL:'อีเมลผู้ประสานงาน', DPO_PHONE:'โทรผู้ประสานงาน',
+  CARD_NOTE:'ข้อความท้ายบัตร', OPEN_REGISTER:'เปิดรับสมัคร (yes/no)'
+};
+
+/* ---------------- เริ่มต้น ---------------- */
+document.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('loginForm').addEventListener('submit', doLogin);
+  document.getElementById('outBtn').addEventListener('click', doLogout);
+  document.getElementById('pwBtn').addEventListener('click', function(){ openModal('pwModal'); });
+  document.getElementById('pwSave').addEventListener('click', savePassword);
+  document.querySelectorAll('[data-close]').forEach(function(b){
+    b.addEventListener('click', function(){ closeModal(b.dataset.close); });
+  });
+  document.getElementById('rail').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-tab]'); if(!b) return;
+    switchTab(b.dataset.tab);
+  });
+  document.getElementById('searchBtn').addEventListener('click', function(){ PAGE=1; loadMembers(); });
+  document.getElementById('q').addEventListener('keydown', function(e){ if(e.key==='Enter'){ PAGE=1; loadMembers(); }});
+  document.getElementById('prevBtn').addEventListener('click', function(){ if(PAGE>1){PAGE--;loadMembers();} });
+  document.getElementById('nextBtn').addEventListener('click', function(){ PAGE++; loadMembers(); });
+  document.getElementById('logSearch').addEventListener('click', function(){ LOGPAGE=1; loadLogs(); });
+  document.getElementById('logPrev').addEventListener('click', function(){ if(LOGPAGE>1){LOGPAGE--;loadLogs();} });
+  document.getElementById('logNext').addEventListener('click', function(){ LOGPAGE++; loadLogs(); });
+  document.getElementById('saveBtn').addEventListener('click', saveMember);
+  document.getElementById('delBtn').addEventListener('click', deleteMember);
+  document.getElementById('printBtn').addEventListener('click', printCard);
+  document.getElementById('addSave').addEventListener('click', createMember);
+  document.getElementById('addClear').addEventListener('click', function(){ buildForm('addForm','a',null); });
+  document.getElementById('xExcel').addEventListener('click', function(){ doExport('apiExportExcel'); });
+  document.getElementById('xCsv').addEventListener('click', function(){ doExport('apiExportCsv'); });
+  document.getElementById('addAdmin').addEventListener('click', createAdmin);
+  document.getElementById('setSave').addEventListener('click', saveSettings);
+
+  ['fstatus','xstatus'].forEach(function(id){
+    var s = document.getElementById(id);
+    Object.keys(STATUSES).forEach(function(k){
+      var o=document.createElement('option'); o.value=k; o.textContent=STATUSES[k]; s.appendChild(o);
+    });
+  });
+  var ft = document.getElementById('ftype');
+  MEMBER_TYPES.forEach(function(t){ var o=document.createElement('option'); o.value=t;o.textContent=t;ft.appendChild(o); });
+
+  if(TOKEN){
+    call('apiWhoAmI', TOKEN).then(function(r){
+      if(r.ok){ ME=r.me; startApp(); } else { showLogin(); }
+    }).catch(showLogin);
+  } else showLogin();
+});
+
+function showLogin(){
+  TOKEN=''; sessionStorage.removeItem('br_token');
+  document.getElementById('loginView').classList.remove('hidden');
+  document.getElementById('appView').classList.add('hidden');
+}
+function doLogin(e){
+  e.preventDefault();
+  var b=document.getElementById('loginBtn'); b.disabled=true; b.textContent='กำลังตรวจสอบ…';
+  call('apiLogin', document.getElementById('u').value, document.getElementById('p').value, clientInfo())
+    .then(function(r){
+      b.disabled=false; b.textContent='เข้าสู่ระบบ';
+      if(!r.ok) return toast(r.error, true);
+      TOKEN=r.token; ME=r.me; sessionStorage.setItem('br_token', TOKEN);
+      document.getElementById('p').value='';
+      startApp();
+      if(r.me.mustChange){
+        document.getElementById('pwForce').classList.remove('hidden');
+        openModal('pwModal');
+      }
+    }).catch(function(err){ b.disabled=false; b.textContent='เข้าสู่ระบบ'; toast(errText(err), true); });
+}
+function doLogout(){
+  call('apiLogout', TOKEN).then(function(){ showLogin(); toast('ออกจากระบบแล้ว'); });
+}
+function startApp(){
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('appView').classList.remove('hidden');
+  document.getElementById('meLabel').textContent = ME.name + ' · ' + ME.role;
+  document.querySelectorAll('.su-only').forEach(function(el){
+    el.style.display = ME.role==='superadmin' ? '' : 'none';
+  });
+  if(ME.role==='viewer'){
+    ['add'].forEach(function(t){
+      var b=document.querySelector('[data-tab="'+t+'"]'); if(b) b.style.display='none';
+    });
+  }
+  buildForm('addForm','a',null);
+  loadStats(); loadMembers();
+}
+function handleErr(err){
+  loading(false);
+  if(isAuthError(err)){ toast(errText(err), true); showLogin(); return; }
+  toast(errText(err), true);
+}
+
+/* ---------------- แท็บ ---------------- */
+function switchTab(name){
+  document.querySelectorAll('.rail button').forEach(function(b){ b.classList.toggle('on', b.dataset.tab===name); });
+  ['members','add','logs','export','admins','settings'].forEach(function(t){
+    document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
+  });
+  if(name==='logs') loadLogs();
+  if(name==='admins') loadAdmins();
+  if(name==='settings') loadSettings();
+}
+
+/* ---------------- สถิติ + รายชื่อ ---------------- */
+function loadStats(){
+  call('apiStats', TOKEN).then(function(r){
+    if(!r.ok) return;
+    var el = document.getElementById('stats');
+    var s = r.byStatus||{};
+    el.innerHTML =
+      stat(r.total,'สมาชิกทั้งหมด') +
+      stat(s.active||0,'สมาชิกปัจจุบัน') +
+      stat(s.pending||0,'รอตรวจสอบ') +
+      stat(r.expiringSoon||0,'บัตรใกล้หมดอายุ (60 วัน)', (r.expiringSoon>0));
+  }).catch(function(e){ showAreaError('stats', e); handleErr(e); });
+}
+function stat(n,label,alert){
+  return '<div class="stat'+(alert?' alert':'')+'"><b>'+n+'</b><span>'+label+'</span></div>';
+}
+
+function loadMembers(){
+  loading(true);
+  call('apiListMembers', TOKEN, {
+    q: document.getElementById('q').value,
+    status: document.getElementById('fstatus').value,
+    member_type: document.getElementById('ftype').value,
+    page: PAGE, pageSize: 25
+  }).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    var tb = document.getElementById('mbody');
+    if(!r.items.length){
+      tb.innerHTML = '<tr><td colspan="7" style="color:var(--ink-3);padding:26px 12px">ไม่พบสมาชิกตามเงื่อนไข ลองเปลี่ยนคำค้นหรือเพิ่มสมาชิกใหม่</td></tr>';
+    } else {
+      tb.innerHTML = r.items.map(function(m){
+        return '<tr>'+
+          '<td style="white-space:nowrap;font-weight:600">'+esc(m.member_code)+'</td>'+
+          '<td>'+esc(m.full_name)+'<br><small>'+esc(m.phone||'')+'</small></td>'+
+          '<td>'+esc(m.position||'-')+'<br><small>'+esc(m.organization||'-')+'</small></td>'+
+          '<td>'+esc(m.member_type||'-')+'</td>'+
+          '<td><span class="tag '+esc(m.status)+'">'+esc(m.status_label)+'</span></td>'+
+          '<td style="white-space:nowrap">'+thaiDate(m.expire_date,true)+'</td>'+
+          '<td class="row-actions"><button class="btn-ghost btn-sm" onclick="openMember(\''+m.id+'\')">'+
+          (ME.role==='viewer'?'ดูข้อมูล':'แก้ไข')+'</button></td></tr>';
+      }).join('');
+    }
+    var from = (r.page-1)*r.pageSize+1, to = Math.min(r.page*r.pageSize, r.total);
+    document.getElementById('pageInfo').textContent = r.total ? (from+'–'+to+' จาก '+r.total+' รายการ') : '';
+    document.getElementById('prevBtn').disabled = r.page<=1;
+    document.getElementById('nextBtn').disabled = r.page*r.pageSize >= r.total;
+  }).catch(function(e){ showAreaError('mbody', e, 7); handleErr(e); });
+}
+
+/* แสดงข้อผิดพลาดตรงจุดที่ผู้ใช้กำลังดูอยู่ พร้อมบอกวิธีแก้เบื้องต้น */
+function showAreaError(id, err, colspan){
+  var msg = esc(errText(err));
+  var hint = isAuthError(err) ? 'กรุณาเข้าสู่ระบบใหม่'
+    : 'หากข้อความนี้ยังขึ้นซ้ำ ให้เปิดตัวแก้ไขสคริปต์แล้วเรียกใช้ฟังก์ชัน diagnose() เพื่อตรวจและซ่อมโครงสร้างฐานข้อมูล';
+  var html = '<div class="note err" style="margin:0"><b>โหลดข้อมูลไม่สำเร็จ</b><br>'+msg+'<br><small>'+hint+'</small></div>';
+  var el = document.getElementById(id);
+  if(!el) return;
+  if(el.tagName === 'TBODY') el.innerHTML = '<tr><td colspan="'+colspan+'">'+html+'</td></tr>';
+  else el.innerHTML = html;
+}
+
+/* ---------------- ฟอร์มสมาชิก (ใช้ทั้งเพิ่มและแก้ไข) ---------------- */
+function buildForm(containerId, p, m){
+  m = m || {};
+  var ro = ME.role==='viewer';
+  function inp(id,label,type,attr){
+    return '<div class="field"><label for="'+p+id+'">'+label+'</label>'+
+      '<input id="'+p+id+'" type="'+(type||'text')+'" '+(attr||'')+(ro?' readonly':'')+
+      ' value="'+esc(m[id]||'')+'"></div>';
+  }
+  function sel(id,label,arr,blank){
+    var o = (blank?'<option value="">— เลือก —</option>':'') + arr.map(function(v){
+      var val = typeof v==='object'? v.v : v, txt = typeof v==='object'? v.t : v;
+      return '<option value="'+esc(val)+'"'+(String(m[id]||'')===String(val)?' selected':'')+'>'+esc(txt)+'</option>';
+    }).join('');
+    return '<div class="field"><label for="'+p+id+'">'+label+'</label><select id="'+p+id+'"'+(ro?' disabled':'')+'>'+o+'</select></div>';
+  }
+  var statusOpts = Object.keys(STATUSES).map(function(k){ return {v:k,t:STATUSES[k]}; });
+
+  var html =
+    '<div class="grid g3">'+
+      sel('prefix','คำนำหน้า',['นาย','นาง','นางสาว','ว่าที่ร้อยตรี','ดร.','นายแพทย์','แพทย์หญิง'],true)+
+      inp('first_name','ชื่อ','text','maxlength="60"')+
+      inp('last_name','นามสกุล','text','maxlength="60"')+
+    '</div><div class="grid g3" style="margin-top:14px">'+
+      inp('national_id','เลขประจำตัวประชาชน','text','maxlength="13" inputmode="numeric"')+
+      inp('birthdate','วันเกิด','date')+
+      sel('gender','เพศ',['ชาย','หญิง'],true)+
+    '</div><div class="grid g2" style="margin-top:14px">'+
+      inp('position','ตำแหน่ง','text','maxlength="80"')+
+      sel('work_type','ประเภทหน่วยงาน',WORK_TYPES,true)+
+    '</div><div class="grid" style="margin-top:14px">'+
+      inp('organization','หน่วยงาน','text','maxlength="120"')+
+      '<div class="field"><label for="'+p+'work_address">ที่อยู่หน่วยงาน</label>'+
+      '<textarea id="'+p+'work_address" maxlength="300"'+(ro?' readonly':'')+'>'+esc(m.work_address||'')+'</textarea></div>'+
+    '</div><div class="grid g3" style="margin-top:14px">'+
+      inp('phone','โทรศัพท์','text','maxlength="15"')+
+      inp('email','อีเมล','email','maxlength="80"')+
+      inp('line_id','ไลน์ไอดี','text','maxlength="40"')+
+    '</div><div class="grid g3" style="margin-top:14px">'+
+      sel('member_type','ประเภทสมาชิก',MEMBER_TYPES,false)+
+      inp('education','วุฒิการศึกษา','text','maxlength="80"')+
+      inp('license_no','เลขใบอนุญาต/เลขที่ ว.','text','maxlength="40"')+
+    '</div><div class="grid g3" style="margin-top:14px">'+
+      sel('status','สถานะสมาชิก',statusOpts,false)+
+      inp('issue_date','วันออกบัตร','date')+
+      inp('expire_date','วันหมดอายุบัตร','date')+
+    '</div><div class="grid" style="margin-top:14px">'+
+      '<div class="field"><label for="'+p+'note">หมายเหตุ</label>'+
+      '<textarea id="'+p+'note" maxlength="300"'+(ro?' readonly':'')+'>'+esc(m.note||'')+'</textarea></div>'+
+    '</div>'+
+    '<div class="media-box" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">'+
+      '<div><div class="thumb" id="'+p+'photoThumb">'+
+        (m.photo_url?'<img src="'+m.photo_url+'">':'<span>รูปถ่าย</span>')+'</div>'+
+        (ro?'':'<div style="margin-top:8px"><input type="file" id="'+p+'photoFile" accept="image/*" style="font-size:.82rem"></div>'+
+        '<label class="check" style="margin-top:6px;font-size:.82rem"><input type="checkbox" id="'+p+'rmPhoto"><span>ลบรูปถ่าย</span></label>')+
+      '</div>'+
+      '<div><div class="thumb sign" id="'+p+'signThumb">'+
+        (m.signature_url?'<img src="'+m.signature_url+'">':'<span>ลายเซ็น</span>')+'</div>'+
+        (ro?'':'<div style="margin-top:8px"><input type="file" id="'+p+'signFile" accept="image/*" style="font-size:.82rem"></div>'+
+        '<label class="check" style="margin-top:6px;font-size:.82rem"><input type="checkbox" id="'+p+'rmSign"><span>ลบลายเซ็น</span></label>')+
+      '</div>'+
+    '</div>';
+
+  var c = document.getElementById(containerId);
+  c.innerHTML = html;
+  c.dataset.photo=''; c.dataset.sign='';
+  if(!ro){
+    c.querySelector('#'+p+'photoFile').addEventListener('change', function(e){
+      readImage(e.target.files[0],600,800,.86).then(function(d){
+        c.dataset.photo=d;
+        document.getElementById(p+'photoThumb').innerHTML='<img src="'+d+'">';
+      }).catch(function(err){ toast(err.message,true); });
+    });
+    c.querySelector('#'+p+'signFile').addEventListener('change', function(e){
+      readImage(e.target.files[0],800,300,.9).then(function(d){
+        c.dataset.sign=d;
+        document.getElementById(p+'signThumb').innerHTML='<img src="'+d+'" style="object-fit:contain">';
+      }).catch(function(err){ toast(err.message,true); });
+    });
+  }
+}
+function collectForm(containerId, p){
+  var c = document.getElementById(containerId);
+  var d = {};
+  ['prefix','first_name','last_name','national_id','birthdate','gender','position','work_type',
+   'organization','work_address','phone','email','line_id','member_type','education','license_no',
+   'status','issue_date','expire_date','note'].forEach(function(f){
+    var el = document.getElementById(p+f);
+    if(el) d[f] = (el.value||'').trim();
+  });
+  if(c.dataset.photo) d.photo_data = c.dataset.photo;
+  if(c.dataset.sign) d.signature_data = c.dataset.sign;
+  var rp = document.getElementById(p+'rmPhoto'), rs = document.getElementById(p+'rmSign');
+  if(rp && rp.checked) d.remove_photo = true;
+  if(rs && rs.checked) d.remove_signature = true;
+  return d;
+}
+
+/* ---------------- เปิด/บันทึกสมาชิก ---------------- */
+function openMember(id){
+  loading(true);
+  call('apiGetMember', TOKEN, id).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    CURRENT = r.member;
+    document.getElementById('editTitle').textContent =
+      (r.member.prefix||'') + r.member.first_name + ' ' + r.member.last_name;
+    document.getElementById('editSub').textContent =
+      'เลขสมาชิก ' + r.member.member_code + ' · แก้ไขล่าสุด ' + thaiDateTime(r.member.updated_at) +
+      ' โดย ' + (r.member.updated_by||'-');
+    buildForm('editForm','e', r.member);
+    var ro = ME.role==='viewer';
+    document.getElementById('saveBtn').style.display = ro?'none':'';
+    document.getElementById('delBtn').style.display = ro?'none':'';
+    document.getElementById('printBtn').style.display = ro?'none':'';
+    openModal('editModal');
+  }).catch(handleErr);
+}
+function saveMember(){
+  if(!CURRENT) return;
+  var d = collectForm('editForm','e');
+  loading(true);
+  call('apiUpdateMember', TOKEN, CURRENT.id, d, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    toast(r.note ? r.note : 'บันทึกแล้ว: ' + r.changed.join(', '));
+    closeModal('editModal'); loadMembers(); loadStats();
+  }).catch(handleErr);
+}
+function createMember(){
+  var d = collectForm('addForm','a');
+  loading(true);
+  call('apiCreateMember', TOKEN, d, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    toast('เพิ่มสมาชิกแล้ว เลขสมาชิก ' + r.member_code);
+    buildForm('addForm','a',null);
+    switchTab('members'); PAGE=1; loadMembers(); loadStats();
+  }).catch(handleErr);
+}
+function deleteMember(){
+  if(!CURRENT) return;
+  var reason = prompt('ระบุเหตุผลในการลบสมาชิก ' + CURRENT.member_code + ' (บันทึกลงประวัติ)');
+  if(reason===null) return;
+  if(!confirm('ยืนยันลบสมาชิก ' + CURRENT.member_code + ' ?\nข้อมูลจะถูกซ่อนจากทะเบียนแต่ยังเก็บไว้ตามระยะเวลาที่นโยบายกำหนด')) return;
+  loading(true);
+  call('apiDeleteMember', TOKEN, CURRENT.id, reason, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    toast('ลบสมาชิกแล้ว'); closeModal('editModal'); loadMembers(); loadStats();
+  }).catch(handleErr);
+}
+function printCard(){
+  if(!CURRENT) return;
+  loading(true);
+  call('apiIssuePrintToken', TOKEN, CURRENT.id, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    var w = window.open(r.url, '_blank');
+    if(!w) toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต pop-up แล้วลองอีกครั้ง', true);
+  }).catch(handleErr);
+}
+
+/* ---------------- ประวัติ ---------------- */
+function loadLogs(){
+  loading(true);
+  call('apiListLogs', TOKEN, {
+    q: document.getElementById('lq').value,
+    action: document.getElementById('laction').value,
+    dateFrom: document.getElementById('lfrom').value,
+    dateTo: document.getElementById('lto').value,
+    page: LOGPAGE, pageSize: 40
+  }).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    if(!Object.keys(ACTIONS).length){
+      ACTIONS = r.actions;
+      var s = document.getElementById('laction');
+      Object.keys(ACTIONS).forEach(function(k){
+        var o=document.createElement('option'); o.value=k; o.textContent=ACTIONS[k]; s.appendChild(o);
+      });
+    }
+    var el = document.getElementById('logList');
+    if(!r.items.length){ el.innerHTML='<p style="color:var(--ink-3)">ไม่มีเหตุการณ์ตามเงื่อนไขที่เลือก</p>'; }
+    else {
+      el.innerHTML = r.items.map(function(x){
+        var chg = '';
+        if(x.detail && x.detail.changes && x.detail.changes.length){
+          chg = '<div class="chg">' + x.detail.changes.map(function(c){
+            return esc(c.label)+': <code>'+esc(c.from)+'</code> → <code>'+esc(c.to)+'</code>';
+          }).join('<br>') + '</div>';
+        }
+        return '<div class="log-item">'+
+          '<div class="meta"><span>'+thaiDateTime(x.ts)+'</span><span>'+esc(x.actor)+'</span>'+
+          '<span>สิทธิ์ '+esc(x.role)+'</span>'+(x.target_id&&x.target_id!=='-'?'<span>เป้าหมาย '+esc(x.target_id)+'</span>':'')+'</div>'+
+          '<div class="what">'+esc(x.action_label)+'</div>'+
+          '<div style="font-size:.9rem;color:var(--ink-2)">'+esc(x.summary)+'</div>'+ chg +'</div>';
+      }).join('');
+    }
+    var from=(r.page-1)*r.pageSize+1, to=Math.min(r.page*r.pageSize,r.total);
+    document.getElementById('logInfo').textContent = r.total? (from+'–'+to+' จาก '+r.total+' เหตุการณ์'):'';
+    document.getElementById('logPrev').disabled = r.page<=1;
+    document.getElementById('logNext').disabled = r.page*r.pageSize>=r.total;
+  }).catch(function(e){ showAreaError('logList', e); handleErr(e); });
+}
+
+/* ---------------- ส่งออก ---------------- */
+function doExport(fn){
+  var opt = {
+    type: document.getElementById('xtype').value,
+    status: document.getElementById('xstatus').value,
+    q: document.getElementById('xq').value,
+    includeNationalId: document.getElementById('xfull').checked,
+    dateFrom: document.getElementById('lfrom').value,
+    dateTo: document.getElementById('lto').value
+  };
+  loading(true);
+  call(fn, TOKEN, opt, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    downloadBase64(r.data, r.filename, r.mime);
+    toast('ดาวน์โหลดไฟล์ ' + r.count + ' รายการ');
+  }).catch(handleErr);
+}
+
+/* ---------------- บัญชีผู้ดูแล ---------------- */
+function loadAdmins(){
+  call('apiListAdmins', TOKEN).then(function(r){
+    if(!r.ok) return toast(r.error,true);
+    document.getElementById('abody').innerHTML = r.admins.map(function(a){
+      return '<tr><td><b>'+esc(a.username)+'</b></td><td>'+esc(a.display_name)+'<br><small>'+esc(a.email||'')+'</small></td>'+
+        '<td>'+esc(a.role)+'</td>'+
+        '<td><span class="tag '+(a.status==='active'?'active':'suspended')+'">'+(a.status==='active'?'ใช้งาน':'ระงับ')+'</span></td>'+
+        '<td>'+ (a.last_login? thaiDateTime(a.last_login):'ยังไม่เคยเข้าใช้') +'</td>'+
+        '<td class="row-actions">'+
+          '<button class="btn-ghost btn-sm" onclick="resetPw(\''+esc(a.username)+'\')">ตั้งรหัสผ่านใหม่</button>'+
+          '<button class="btn-ghost btn-sm" onclick="toggleAdmin(\''+esc(a.username)+'\',\''+(a.status==='active'?'disabled':'active')+'\')">'+
+            (a.status==='active'?'ระงับ':'เปิดใช้')+'</button>'+
+        '</td></tr>';
+    }).join('');
+  }).catch(handleErr);
+}
+function createAdmin(){
+  var d = {
+    username: document.getElementById('nu').value,
+    display_name: document.getElementById('nn').value,
+    email: document.getElementById('ne').value,
+    role: document.getElementById('nr').value,
+    password: document.getElementById('np').value
+  };
+  call('apiCreateAdmin', TOKEN, d).then(function(r){
+    if(!r.ok) return toast(r.error,true);
+    toast('สร้างบัญชีแล้ว แจ้งรหัสผ่านเริ่มต้นให้เจ้าตัวและให้เปลี่ยนทันที');
+    ['nu','nn','ne','np'].forEach(function(i){ document.getElementById(i).value=''; });
+    loadAdmins();
+  }).catch(handleErr);
+}
+function resetPw(u){
+  var pw = prompt('ตั้งรหัสผ่านใหม่ให้ ' + u + ' (อย่างน้อย 10 ตัว มีตัวอักษรและตัวเลข)');
+  if(!pw) return;
+  call('apiUpdateAdmin', TOKEN, u, {password:pw}).then(function(r){
+    toast(r.ok?'ตั้งรหัสผ่านใหม่แล้ว':r.error, !r.ok);
+    if(r.ok) loadAdmins();
+  }).catch(handleErr);
+}
+function toggleAdmin(u, status){
+  call('apiUpdateAdmin', TOKEN, u, {status:status}).then(function(r){
+    toast(r.ok?'ปรับสถานะบัญชีแล้ว':r.error, !r.ok);
+    if(r.ok) loadAdmins();
+  }).catch(handleErr);
+}
+function savePassword(){
+  var o=document.getElementById('op').value, a=document.getElementById('n1').value, b=document.getElementById('n2').value;
+  if(a!==b) return toast('รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน', true);
+  call('apiChangePassword', TOKEN, o, a).then(function(r){
+    if(!r.ok) return toast(r.error, true);
+    toast('เปลี่ยนรหัสผ่านเรียบร้อย');
+    ['op','n1','n2'].forEach(function(i){ document.getElementById(i).value=''; });
+    document.getElementById('pwForce').classList.add('hidden');
+    closeModal('pwModal');
+  }).catch(handleErr);
+}
+
+/* ---------------- ตั้งค่า ---------------- */
+function loadSettings(){
+  call('apiGetSettings', TOKEN).then(function(r){
+    if(!r.ok) return toast(r.error,true);
+    var s = r.settings;
+    document.getElementById('setForm').innerHTML = Object.keys(SET_LABELS).map(function(k){
+      var long = (k==='CLUB_ADDRESS'||k==='CARD_NOTE');
+      return '<div class="field"><label for="s_'+k+'">'+esc(SET_LABELS[k])+'</label>'+
+        (long? '<textarea id="s_'+k+'">'+esc(s[k]||'')+'</textarea>'
+             : '<input id="s_'+k+'" value="'+esc(s[k]||'')+'">')+'</div>';
+    }).join('');
+  }).catch(handleErr);
+}
+function saveSettings(){
+  var d = {};
+  Object.keys(SET_LABELS).forEach(function(k){ d[k] = document.getElementById('s_'+k).value; });
+  call('apiSaveSettings', TOKEN, d).then(function(r){
+    toast(r.ok?'บันทึกการตั้งค่าแล้ว':r.error, !r.ok);
+  }).catch(handleErr);
+}
+
+/* ---------------- โมดัล ---------------- */
+function openModal(id){ document.getElementById(id).classList.add('on'); }
+function closeModal(id){ document.getElementById(id).classList.remove('on'); }
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape') document.querySelectorAll('.modal.on').forEach(function(m){ m.classList.remove('on'); });
+});
+</script>
+</body>
+</html>

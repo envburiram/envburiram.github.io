@@ -11,9 +11,9 @@
    | Key | ค่า |
    | --- | --- |
    | `SPREADSHEET_ID` | ID ของ Google Sheets ที่บันทึกข้อมูล |
-   | `SLIDE_ID` | ID ของ Google Slides ต้นแบบแผนที่ |
-   | `FOLDER_ID` | ID ของโฟลเดอร์ที่เก็บรูปแผนที่ |
-   | `NOTIFY_EMAIL` | อีเมลผู้รับรายงาน (หลายคนคั่นด้วย `,`) |
+   | `SLIDE_ID` | (ไม่บังคับ) ID ของ Google Slides ต้นแบบแผนที่ ถ้าไม่ใส่จะไม่สร้างรูปแผนที่ |
+   | `FOLDER_ID` | (ไม่บังคับ) ID ของโฟลเดอร์ที่เก็บรูปแผนที่ ถ้าไม่ใส่จะเก็บที่ My Drive |
+   | `NOTIFY_EMAIL` | (ไม่บังคับ) อีเมลผู้รับรายงาน (หลายคนคั่นด้วย `,`) ถ้าไม่ใส่จะไม่ส่งอีเมล |
 
 3. (แนะนำ) Project Settings > เปิด "Show appsscript.json" แล้วใช้ค่าจาก `appsscript.json`
    เพื่อกำหนด time zone เป็น `Asia/Bangkok` และจำกัดสิทธิ์ (OAuth scopes) เท่าที่ใช้จริง

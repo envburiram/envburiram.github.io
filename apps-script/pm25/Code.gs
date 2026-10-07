@@ -4,9 +4,9 @@
  * ตั้งค่าที่ Project Settings > Script properties ก่อนใช้งาน
  * (ไม่เก็บไว้ในโค้ด เพื่อไม่ให้ ID ไฟล์และอีเมลหลุดออกไปพร้อมซอร์สโค้ด):
  *   SPREADSHEET_ID  ID ของ Google Sheets ที่ใช้บันทึกข้อมูล
- *   SLIDE_ID        ID ของ Google Slides ต้นแบบแผนที่
- *   FOLDER_ID       ID ของโฟลเดอร์ Google Drive ที่เก็บรูปแผนที่
- *   NOTIFY_EMAIL    อีเมลผู้รับรายงาน (หลายคน คั่นด้วย ,) ถ้าไม่ตั้งค่าจะไม่ส่งอีเมล
+ *   SLIDE_ID        ID ของ Google Slides ต้นแบบแผนที่ ถ้าไม่ตั้งค่าจะไม่สร้างรูปแผนที่
+ *   FOLDER_ID       ID ของโฟลเดอร์ Google Drive ที่เก็บรูปแผนที่ ถ้าไม่ตั้งค่าจะเก็บที่ My Drive
+ *   NOTIFY_EMAIL    อีเมลผู้รับรายงาน (หลายคนคั่นด้วย ,) ถ้าไม่ตั้งค่าจะไม่ส่งอีเมล
  */
 
 const TIME_ZONE = "Asia/Bangkok"
@@ -115,8 +115,8 @@ function getConfig_() {
   }
   return {
     spreadsheetId: required("SPREADSHEET_ID"),
-    slideId: required("SLIDE_ID"),
-    folderId: required("FOLDER_ID"),
+    slideId: (props.getProperty("SLIDE_ID") || "").trim(),
+    folderId: (props.getProperty("FOLDER_ID") || "").trim(),
     notifyEmail: (props.getProperty("NOTIFY_EMAIL") || "").trim(),
   }
 }
@@ -195,6 +195,11 @@ function buriramRow_(br, imageUrl, now) {
 }
 
 function createMapImage_(config, amphoe, br, now) {
+  if (!config.slideId) {
+    console.warn("ไม่ได้ตั้งค่า SLIDE_ID ข้ามการสร้างรูปแผนที่")
+    return
+  }
+
   const year = Number(Utilities.formatDate(now, TIME_ZONE, "yyyy")) + 543
   const name = Utilities.formatDate(now, TIME_ZONE, "d/M/") + year + Utilities.formatDate(now, TIME_ZONE, " HH:mm:ss")
   const copy = DriveApp.getFileById(config.slideId).makeCopy(name)
@@ -235,7 +240,7 @@ function createMapImage_(config, amphoe, br, now) {
     )
     if (response.getResponseCode() !== 200) throw new Error("ส่งออกรูปแผนที่ไม่สำเร็จ HTTP " + response.getResponseCode())
 
-    const file = DriveApp.getFolderById(config.folderId).createFile(response.getAs("image/jpeg").setName(name + ".jpg"))
+    const file = config.folderId ? DriveApp.getFolderById(config.folderId).createFile(response.getAs("image/jpeg").setName(name + ".jpg")) : DriveApp.createFile(response.getAs("image/jpeg").setName(name + ".jpg"))
     try {
       // ANYONE_WITH_LINK: ดูได้เฉพาะคนที่มีลิงก์ ไม่ถูกค้นเจอแบบ ANYONE
       file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)

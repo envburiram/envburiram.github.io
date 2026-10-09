@@ -9,15 +9,15 @@
 var APP = {
   NAME: 'ระบบสมาชิกชมรมอนามัยสิ่งแวดล้อมจังหวัดบุรีรัมย์',
   SHORT: 'ชมรมอนามัยสิ่งแวดล้อม จ.บุรีรัมย์',
-  VERSION: '1.0.0',
-  CONSENT_VERSION: '2569.1',   // เวอร์ชันหนังสือให้ความยินยอม (แก้แล้วต้องขอความยินยอมใหม่)
+  VERSION: '1.1.0',
+  CONSENT_VERSION: '2569.2',   // เวอร์ชันหนังสือให้ความยินยอม (แก้แล้วต้องขอความยินยอมใหม่) 2569.2 = ระยะเก็บรักษา 5 ปี
   TZ: 'Asia/Bangkok',
   SESSION_HOURS: 6,
   MAX_LOGIN_FAIL: 5,
   LOCK_MINUTES: 15,
   PAGE_SIZE: 25,
-  CARD_YEARS: 3,               // อายุบัตรสมาชิก (ปี)
-  RETENTION_YEARS: 10,         // ระยะเวลาเก็บข้อมูลหลังพ้นสมาชิกภาพ
+  // อายุบัตรสมาชิกอยู่ในค่าตั้งค่า TERM_YEARS (ค่าเริ่มต้น 1 ปี ตรงกับ membership.term_years ของระบบ envbrclub-supabase)
+  RETENTION_YEARS: 5,          // ระยะเวลาเก็บข้อมูลหลังพ้นสมาชิกภาพ (ตรงกับ legal.retention_years ของระบบ envbrclub-supabase)
   MAX_IMAGE_BYTES: 1500000,    // 1.5 MB ต่อรูป เมื่อผู้ดูแลอัปโหลด
   // หน้าสมัครสาธารณะ (ไม่ต้องล็อกอิน) : จำกัดขนาดและจำนวน กันการยิงคำขอจน Drive/สเปรดชีตของเจ้าของเต็ม
   MAX_PUBLIC_IMAGE_BYTES: 400000,  // หน้าเว็บย่อรูปก่อนส่งอยู่แล้ว ปกติไม่เกิน 200 KB
@@ -48,7 +48,9 @@ var M_COLS = [
   'issue_date', 'expire_date',
   'consent_version', 'consent_at', 'consent_marketing',
   'verify_token', 'note',
-  'created_at', 'created_by', 'updated_at', 'updated_by'
+  'created_at', 'created_by', 'updated_at', 'updated_by',
+  // เพิ่มต่อท้ายเท่านั้น : เลขที่ใบสมัคร (APP-ปีพ.ศ.-ลำดับ) ออกตอนรับใบสมัคร ส่วนเลขสมาชิกออกตอนอนุมัติ
+  'app_no'
 ];
 
 /** ฟิลด์ที่ต้องเข้ารหัสก่อนบันทึกลงชีต */
@@ -72,7 +74,8 @@ var M_LABELS = {
   issue_date: 'วันออกบัตร', expire_date: 'วันหมดอายุ',
   consent_version: 'เวอร์ชันความยินยอม', consent_at: 'วันที่ให้ความยินยอม',
   consent_marketing: 'ยินยอมรับข่าวสาร', verify_token: 'รหัสตรวจสอบ', note: 'หมายเหตุ',
-  created_at: 'สร้างเมื่อ', created_by: 'สร้างโดย', updated_at: 'แก้ไขล่าสุด', updated_by: 'แก้ไขโดย'
+  created_at: 'สร้างเมื่อ', created_by: 'สร้างโดย', updated_at: 'แก้ไขล่าสุด', updated_by: 'แก้ไขโดย',
+  app_no: 'เลขที่ใบสมัคร'
 };
 
 var STATUS_LABELS = {
@@ -122,6 +125,7 @@ function render_(file, title, params, allowEmbed) {
   t.PARAMS = params || {};
   t.WEBAPP_URL = getWebAppUrl_();
   t.SETTINGS = getPublicSettings();
+  t.LISTS = formLists_();   // ตัวเลือกในฟอร์ม มาจากฝั่งเซิร์ฟเวอร์ชุดเดียวกับที่ใช้ตรวจข้อมูล ไม่ต้องเขียนซ้ำในหน้าเว็บ
   return t.evaluate()
     .setTitle(title)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5')
@@ -315,21 +319,23 @@ function withScriptLock_(fn, waitMs) {
 /* =========================================================
  * การตั้งค่าชมรม
  * =======================================================*/
+/* ค่าเริ่มต้นใช้ข้อมูลจริงของชมรมชุดเดียวกับตาราง settings ของระบบ envbrclub-supabase */
 var DEFAULT_SETTINGS = {
   CLUB_NAME: 'ชมรมอนามัยสิ่งแวดล้อมจังหวัดบุรีรัมย์',
-  CLUB_NAME_EN: 'BURIRAM ENVIRONMENTAL HEALTH CLUB',
-  CLUB_ADDRESS: 'สำนักงานสาธารณสุขจังหวัดบุรีรัมย์ ถนนจิระ ตำบลในเมือง อำเภอเมืองบุรีรัมย์ จังหวัดบุรีรัมย์ 31000',
-  CLUB_PHONE: '0 4461 1562',
-  CLUB_EMAIL: 'ehclub.buriram@gmail.com',
-  PRESIDENT_NAME: 'นายประธานชมรม  ตัวอย่าง',
+  CLUB_NAME_EN: 'Buriram Environmental Health Club',
+  CLUB_ADDRESS: 'สำนักงานสาธารณสุขจังหวัดบุรีรัมย์ เลขที่ 261 ถนนจิระ ตำบลในเมือง อำเภอเมืองบุรีรัมย์ จังหวัดบุรีรัมย์ 31000',
+  CLUB_PHONE: '0 4461 1562 ต่อ 127',
+  CLUB_EMAIL: 'envburiram@gmail.com',
+  PRESIDENT_NAME: 'นายสังคม ลำไธสง',
   PRESIDENT_TITLE: 'ประธานชมรมอนามัยสิ่งแวดล้อมจังหวัดบุรีรัมย์',
   PRESIDENT_SIGN_ID: '',
   LOGO_ID: '',
   DPO_NAME: 'เลขานุการชมรมอนามัยสิ่งแวดล้อมจังหวัดบุรีรัมย์',
-  DPO_EMAIL: 'privacy.ehclub.buriram@gmail.com',
-  DPO_PHONE: '0 4461 1562',
+  DPO_EMAIL: 'envburiram@gmail.com',
+  DPO_PHONE: '0 4461 1562 ต่อ 127',
   CARD_NOTE: 'บัตรนี้เป็นทรัพย์สินของชมรมฯ ผู้เก็บได้โปรดส่งคืนตามที่อยู่ด้านบน',
-  OPEN_REGISTER: 'yes'
+  OPEN_REGISTER: 'yes',
+  TERM_YEARS: '1'
 };
 
 function getSettings_() {
@@ -353,8 +359,30 @@ function getPublicSettings() {
     CLUB_PHONE: s.CLUB_PHONE, CLUB_EMAIL: s.CLUB_EMAIL,
     DPO_NAME: s.DPO_NAME, DPO_EMAIL: s.DPO_EMAIL, DPO_PHONE: s.DPO_PHONE,
     OPEN_REGISTER: s.OPEN_REGISTER, CONSENT_VERSION: APP.CONSENT_VERSION,
-    RETENTION_YEARS: APP.RETENTION_YEARS
+    RETENTION_YEARS: APP.RETENTION_YEARS, TERM_YEARS: termYears_(s)
   };
+}
+
+/** อายุบัตรสมาชิก (ปี) จากค่าตั้งค่า TERM_YEARS เป็นจำนวนเต็ม 1-10 ค่าอื่นใช้ 1 ปี */
+function termYears_(s) {
+  var n = Number((s || getSettings_()).TERM_YEARS);
+  return n >= 1 && n <= 10 && Math.floor(n) === n ? n : 1;
+}
+
+/**
+ * ตรวจค่าตั้งค่าก่อนบันทึก คืนข้อความผิดพลาด หรือ '' ถ้าถูกต้อง
+ * ค่าเหล่านี้ไปปรากฏบนบัตร หน้าสาธารณะ และเป็นตัวกำหนดการทำงานของระบบ จึงไม่รับค่าอะไรก็ได้
+ * (ระบบ envbrclub-supabase เก็บค่าตั้งค่าเป็นชนิดข้อมูลที่ชัดเจนและมีตัวกันในฐานข้อมูล)
+ */
+function settingError_(k, v) {
+  if ((k === 'CLUB_NAME' || k === 'CLUB_ADDRESS') && !v) return 'กรุณากรอก' + (k === 'CLUB_NAME' ? 'ชื่อชมรม' : 'ที่อยู่ชมรม');
+  if (k === 'OPEN_REGISTER' && v !== 'yes' && v !== 'no') return 'ช่องเปิดรับสมัครต้องเป็น yes หรือ no';
+  if (k === 'TERM_YEARS' && !/^([1-9]|10)$/.test(v)) return 'อายุบัตรสมาชิกต้องเป็นจำนวนเต็ม 1-10 ปี';
+  if ((k === 'CLUB_EMAIL' || k === 'DPO_EMAIL') && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return 'รูปแบบอีเมลไม่ถูกต้อง (' + k + ')';
+  if ((k === 'LOGO_ID' || k === 'PRESIDENT_SIGN_ID') && v && !/^[A-Za-z0-9_-]{10,100}$/.test(v)) {
+    return 'รหัสไฟล์ Drive ไม่ถูกต้อง (' + k + ') ให้ใส่เฉพาะส่วน /d/XXXXX/ ของลิงก์';
+  }
+  return '';
 }
 
 function apiGetSettings(token) {
@@ -369,9 +397,18 @@ function apiSaveSettings(token, data) {
   var map = {};
   for (var i = 1; i < rows.length; i++) map[String(rows[i][0])] = i + 1;
   var changed = [];
+  // ตรวจทุกช่องก่อน ถ้ามีช่องใดผิดจะไม่บันทึกเลยสักช่อง
+  var clean = {}, errs = [];
   Object.keys(data || {}).forEach(function (k) {
     if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k)) return;
-    var v = String(data[k] === null || data[k] === undefined ? '' : data[k]).substring(0, 500);
+    var v = String(data[k] === null || data[k] === undefined ? '' : data[k]).trim().substring(0, 500);
+    if (k === 'OPEN_REGISTER') v = v.toLowerCase();
+    var err = settingError_(k, v);
+    if (err) errs.push(err); else clean[k] = v;
+  });
+  if (errs.length) return { ok: false, error: errs.join('\n') };
+  Object.keys(clean).forEach(function (k) {
+    var v = clean[k];
     if (map[k]) {
       var old = String(sh.getRange(map[k], 2).getValue());
       if (old !== v) { sh.getRange(map[k], 2).setNumberFormat('@').setValue(v); changed.push(k); }
@@ -604,12 +641,23 @@ function fmtDate_(d) { return Utilities.formatDate(d, APP.TZ, 'yyyy-MM-dd'); }
 function fmtDateTime_(d) { return Utilities.formatDate(d, APP.TZ, 'yyyy-MM-dd HH:mm:ss'); }
 function now_() { return fmtDateTime_(new Date()); }
 
+/** วันสิ้นสุดของช่วง years ปีที่เริ่มวันที่ dateStr (นับวันเริ่มด้วย จึงลบหนึ่งวัน) */
 function addYears_(dateStr, years) {
   var p = String(dateStr).split('-');
   var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
   d.setFullYear(d.getFullYear() + years);
   d.setDate(d.getDate() - 1);
   return fmtDate_(d);
+}
+
+function addDays_(dateStr, days) {
+  var p = String(dateStr).split('-');
+  return fmtDate_(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + days));
+}
+
+/** ปี พ.ศ. ปัจจุบันตามเวลาไทย */
+function beYear_() {
+  return Number(Utilities.formatDate(new Date(), APP.TZ, 'yyyy')) + 543;
 }
 
 function escapeHtml_(s) {

@@ -47,11 +47,8 @@
       <div class="grid g3">
         <div class="field">
           <label for="prefix">คำนำหน้า <span class="req">*</span></label>
-          <select id="prefix" required>
-            <option value="">— เลือก —</option>
-            <option>นาย</option><option>นาง</option><option>นางสาว</option>
-            <option>ว่าที่ร้อยตรี</option><option>ดร.</option><option>นายแพทย์</option><option>แพทย์หญิง</option>
-          </select>
+          <select id="prefix" required><option value="">— เลือก —</option></select>
+          <input id="prefix_other" class="hidden" maxlength="40" placeholder="พิมพ์คำนำหน้า เช่น จ.ส.อ." style="margin-top:6px">
         </div>
         <div class="field">
           <label for="first_name">ชื่อ <span class="req">*</span></label>
@@ -74,7 +71,7 @@
         </div>
         <div class="field">
           <label for="gender">เพศ</label>
-          <select id="gender"><option value="">— ไม่ระบุ —</option><option>ชาย</option><option>หญิง</option></select>
+          <select id="gender"><option value="">— เลือก —</option></select>
         </div>
       </div>
     </div>
@@ -186,10 +183,10 @@
 
   <div id="done" class="panel done hidden">
     <h2>รับใบสมัครเรียบร้อยแล้ว</h2>
-    <p style="margin:0 auto">เลขสมาชิกของท่านคือ</p>
+    <p style="margin:0 auto">เลขที่ใบสมัครของท่านคือ</p>
     <div class="code" id="doneCode"></div>
-    <p style="margin:0 auto 18px">สถานะปัจจุบัน <b>รอตรวจสอบ</b> เจ้าหน้าที่จะตรวจสอบข้อมูลและออกบัตรสมาชิกให้ภายหลัง
-      กรุณาบันทึกเลขสมาชิกไว้เพื่อใช้ติดต่อสอบถาม</p>
+    <p style="margin:0 auto 18px">สถานะปัจจุบัน <b>รอตรวจสอบ</b> เมื่อเจ้าหน้าที่อนุมัติแล้ว ท่านจะได้รับเลขสมาชิกและบัตรสมาชิก
+      (อายุบัตร <?= SETTINGS.TERM_YEARS ?> ปี) กรุณาบันทึกเลขที่ใบสมัครไว้เพื่อใช้ติดต่อสอบถาม</p>
     <button type="button" class="btn-ghost" id="nextBtn">สมัครรายถัดไป</button>
   </div>
 </div>
@@ -202,9 +199,8 @@
 
 <script>
 var SETTINGS = <?!= jsonForScript_(SETTINGS) ?>;
-var MEMBER_TYPES = ['สามัญ','วิสามัญ','สมทบ','กิตติมศักดิ์'];
-var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด','สำนักงานสาธารณสุขอำเภอ','โรงพยาบาล',
-  'โรงพยาบาลส่งเสริมสุขภาพตำบล','องค์กรปกครองส่วนท้องถิ่น','สถานศึกษา','ภาคเอกชน','อื่น ๆ'];
+var LISTS = <?!= jsonForScript_(LISTS) ?>;   /* ตัวเลือกชุดเดียวกับที่เซิร์ฟเวอร์ใช้ตรวจข้อมูล */
+var OTHER = 'อื่นๆ';
 var photoData = '', signData = '', pad = null;
 
 document.addEventListener('DOMContentLoaded', function(){
@@ -212,8 +208,11 @@ document.addEventListener('DOMContentLoaded', function(){
     document.getElementById('closed').classList.remove('hidden');
     document.getElementById('form').classList.add('hidden');
   }
-  fill('member_type', MEMBER_TYPES, 'สามัญ');
-  fill('work_type', WORK_TYPES, '');
+  fill('prefix', LISTS.prefixes.concat([OTHER]), '');
+  fill('gender', LISTS.genders, '');
+  fill('member_type', LISTS.member_types, 'สามัญ');
+  fill('work_type', LISTS.work_types, '');
+  document.getElementById('prefix').addEventListener('change', onPrefix);
   document.getElementById('consentBox').innerHTML = consentHtml();
   pad = SignaturePad(document.getElementById('pad'));
 
@@ -252,6 +251,7 @@ function resetForm(){
   f.classList.remove('hidden');
   f.reset();
   photoData = ''; signData = '';
+  onPrefix();
   document.getElementById('photoThumb').innerHTML = '<span>รูปถ่าย<br>ขนาด 1 นิ้ว</span>';
   document.getElementById('signThumb').innerHTML = '<span>ลายเซ็น</span>';
   pad.clear();
@@ -266,6 +266,18 @@ function fill(id, arr, def){
     if(v===def) o.selected = true;
     s.appendChild(o);
   });
+}
+/* เลือก "อื่นๆ" แล้วพิมพ์คำนำหน้าเอง (แบบเดียวกับใบสมัครของระบบ envbrclub-supabase) */
+function onPrefix(){
+  var other = document.getElementById('prefix').value === OTHER;
+  var box = document.getElementById('prefix_other');
+  box.classList.toggle('hidden', !other);
+  box.required = other;
+  if(!other) box.value = '';
+}
+function prefixValue(){
+  var v = val('prefix');
+  return v === OTHER ? val('prefix_other') : v;
 }
 function setThumb(id, data, fit){
   var el = document.getElementById(id);
@@ -297,9 +309,10 @@ function submit(e){
   var nid = document.getElementById('national_id').value.replace(/\D/g,'');
   if(!checkNid(nid)) return toast('เลขประจำตัวประชาชนไม่ถูกต้อง', true);
   if(!document.getElementById('consent').checked) return toast('กรุณายอมรับข้อตกลงการเก็บและใช้ข้อมูลส่วนบุคคล', true);
+  if(!prefixValue()) return toast('กรุณาระบุคำนำหน้า', true);
 
   var payload = {
-    prefix: val('prefix'), first_name: val('first_name'), last_name: val('last_name'),
+    prefix: prefixValue(), first_name: val('first_name'), last_name: val('last_name'),
     national_id: nid, birthdate: val('birthdate'), gender: val('gender'),
     position: val('position'), organization: val('organization'), work_type: val('work_type'),
     work_address: val('work_address'), phone: val('phone'), email: val('email'), line_id: val('line_id'),
@@ -315,7 +328,7 @@ function submit(e){
     document.getElementById('submitBtn').disabled = false;
     if(!r.ok) return toast(r.error, true);
     document.getElementById('form').classList.add('hidden');
-    document.getElementById('doneCode').textContent = r.member_code;
+    document.getElementById('doneCode').textContent = r.app_no;
     document.getElementById('done').classList.remove('hidden');
     window.scrollTo(0,0);
   }).catch(function(err){

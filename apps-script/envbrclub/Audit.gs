@@ -7,8 +7,9 @@
  *
  * เหตุการณ์ที่บันทึก
  *   auth.login / auth.fail / auth.logout / auth.locked / auth.pwchange
- *   member.create / member.update / member.status / member.delete / member.purge
- *   member.view_sensitive / member.card_print / member.card_verify
+ *   member.create / member.update / member.status / member.renew / member.delete
+ *   member.view_sensitive / member.card_print / member.card_reissue / member.card_verify
+ *   (member.purge เป็นชื่อเหตุการณ์ลบถาวรของรุ่นก่อน ยังแสดงผลได้)
  *   export.excel / export.csv
  *   admin.create / admin.update / settings.update / security.key_rotate
  *************************************************************/
@@ -17,8 +18,10 @@ var ACTION_LABELS = {
   'auth.login': 'เข้าสู่ระบบ', 'auth.logout': 'ออกจากระบบ', 'auth.fail': 'เข้าสู่ระบบไม่สำเร็จ',
   'auth.locked': 'บัญชีถูกล็อก', 'auth.pwchange': 'เปลี่ยนรหัสผ่าน', 'auth.pwchange_fail': 'เปลี่ยนรหัสผ่านไม่สำเร็จ',
   'member.register': 'สมัครสมาชิกผ่านหน้าเว็บ', 'member.create': 'เพิ่มสมาชิก', 'member.update': 'แก้ไขข้อมูลสมาชิก',
-  'member.status': 'เปลี่ยนสถานะสมาชิก', 'member.delete': 'ลบสมาชิก (ลบเชิงตรรกะ)', 'member.purge': 'ลบข้อมูลถาวร',
+  'member.status': 'เปลี่ยนสถานะสมาชิก', 'member.renew': 'ต่ออายุสมาชิก',
+  'member.delete': 'ลบข้อมูลสมาชิก', 'member.purge': 'ลบข้อมูลถาวร (รุ่นก่อน)',
   'member.view_sensitive': 'เปิดดูข้อมูลอ่อนไหว', 'member.card_print': 'พิมพ์บัตรสมาชิก',
+  'member.card_reissue': 'ออกบัตรใบใหม่ (เปลี่ยนรหัส QR)',
   'member.card_verify': 'ตรวจสอบบัตรผ่าน QR', 'member.autoexpire': 'ปรับสถานะหมดอายุอัตโนมัติ',
   'export.excel': 'ส่งออกไฟล์ Excel', 'export.csv': 'ส่งออกไฟล์ CSV',
   'admin.create': 'เพิ่มบัญชีผู้ดูแล', 'admin.update': 'แก้ไขบัญชีผู้ดูแล', 'admin.reset_pw': 'ตั้งรหัสผ่านใหม่',

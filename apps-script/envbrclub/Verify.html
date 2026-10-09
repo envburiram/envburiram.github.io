@@ -51,10 +51,13 @@ document.addEventListener('DOMContentLoaded', function(){
       return show(banner('no','ไม่พบบัตรนี้ในระบบ','บัตรอาจถูกยกเลิก หรือคิวอาร์โค้ดไม่ถูกต้อง'));
     }
     var d = r.data;
-    var kind = r.valid ? 'ok' : (d.status==='expired' ? 'warn' : 'no');
+    var kind = r.valid ? 'ok' : (d.status==='expired' || r.not_started ? 'warn' : 'no');
     var head = r.valid ? 'บัตรสมาชิกใช้งานได้'
+             : r.not_started ? 'บัตรใบนี้ยังไม่ถึงวันเริ่มใช้'
              : (d.status==='expired' ? 'บัตรหมดอายุแล้ว' : 'บัตรนี้ไม่มีผลใช้งาน');
-    var sub  = r.valid ? 'ข้อมูลตรงกับทะเบียนสมาชิกของชมรม' : 'สถานะปัจจุบัน: ' + d.status_label;
+    var sub  = r.valid ? 'ข้อมูลตรงกับทะเบียนสมาชิกของชมรม'
+             : r.not_started ? 'บัตรมีผลตั้งแต่ ' + thaiDate(d.issue_date,true)
+             : 'สถานะปัจจุบัน: ' + d.status_label;
 
     var html = '<div class="result">' + bannerInner(kind, head, sub) +
       '<div class="who">' +

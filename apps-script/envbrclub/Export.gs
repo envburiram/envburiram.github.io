@@ -21,7 +21,7 @@ function formulaSafe_(v) {
 }
 
 var EXPORT_FIELDS = [
-  'member_code', 'status', 'prefix', 'first_name', 'last_name', 'national_id', 'birthdate', 'gender',
+  'member_code', 'app_no', 'status', 'prefix', 'first_name', 'last_name', 'national_id', 'birthdate', 'gender',
   'member_type', 'position', 'organization', 'work_type', 'work_address',
   'phone', 'email', 'line_id', 'education', 'license_no',
   'issue_date', 'expire_date', 'consent_version', 'consent_at', 'consent_marketing',
@@ -39,13 +39,15 @@ function buildMemberRows_(role, opt) {
     if (opt.member_type && m.member_type !== opt.member_type) return false;
     if (opt.work_type && m.work_type !== opt.work_type) return false;
     if (q) {
-      var hay = [m.member_code, m.first_name, m.last_name, m.position, m.organization].join(' ').toLowerCase();
+      var hay = [m.member_code, m.app_no, m.first_name, m.last_name, m.position, m.organization].join(' ').toLowerCase();
       if (hay.indexOf(q) < 0) return false;
     }
     return true;
   });
 
-  rows.sort(function (a, b) { return String(a.member_code) > String(b.member_code) ? 1 : -1; });
+  // เรียงตามเลขสมาชิก ผู้ที่ยังไม่มีเลขสมาชิก (รออนุมัติ) เรียงตามเลขที่ใบสมัครต่อท้าย
+  var key = function (m) { return (m.member_code ? '0' + m.member_code : '1' + (m.app_no || '')); };
+  rows.sort(function (a, b) { return key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0; });
 
   var header = ['ลำดับ'].concat(EXPORT_FIELDS.map(function (f) { return M_LABELS[f] || f; }));
   var data = rows.map(function (m, i) {
@@ -102,7 +104,7 @@ function apiExportExcel(token, opt, client) {
   try {
     var sh = tmp.getSheets()[0];
     sh.setName(isLog ? 'ประวัติการใช้งาน' : 'รายชื่อสมาชิก');
-    ensureColumns_(sh, built.header.length);   // ชีตใหม่มี 26 คอลัมน์ แต่รายงานสมาชิกใช้ 28
+    ensureColumns_(sh, built.header.length);   // ชีตใหม่มี 26 คอลัมน์ แต่รายงานสมาชิกใช้ 29
 
     // ส่วนหัวรายงาน
     var settings = getSettings_();

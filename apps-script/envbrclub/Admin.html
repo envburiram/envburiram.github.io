@@ -92,7 +92,7 @@
           <div class="toolbar">
             <div class="field">
               <label for="q">ค้นหา</label>
-              <input id="q" placeholder="ชื่อ นามสกุล เลขสมาชิก หน่วยงาน หรือเบอร์โทร">
+              <input id="q" placeholder="ชื่อ นามสกุล เลขสมาชิก เลขที่ใบสมัคร หน่วยงาน หรือเบอร์โทร">
             </div>
             <div class="field" style="flex:0 0 170px">
               <label for="fstatus">สถานะ</label>
@@ -107,7 +107,7 @@
           <div class="table-scroll">
             <table>
               <thead><tr>
-                <th>เลขสมาชิก</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง / หน่วยงาน</th>
+                <th>เลขสมาชิก / ใบสมัคร</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง / หน่วยงาน</th>
                 <th>ประเภท</th><th>สถานะ</th><th>บัตรหมดอายุ</th><th></th>
               </tr></thead>
               <tbody id="mbody"><tr><td colspan="7" style="color:var(--ink-3)">กำลังโหลด…</td></tr></tbody>
@@ -125,7 +125,7 @@
       <section id="tab-add" class="hidden">
         <div class="panel">
           <div class="section-title"><h2>เพิ่มสมาชิกใหม่</h2>
-            <span class="hint">ใช้เมื่อรับใบสมัครกระดาษ ระบบจะออกเลขสมาชิกให้อัตโนมัติ</span></div>
+            <span class="hint">ใช้เมื่อรับใบสมัครกระดาษ ระบบออกเลขที่ใบสมัครให้ และออกเลขสมาชิกเมื่อสถานะไม่ใช่ "รอตรวจสอบ"</span></div>
           <div id="addForm"></div>
           <div class="btn-row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:16px;margin-top:16px">
             <button class="btn-ghost" id="addClear">ล้างฟอร์ม</button>
@@ -229,7 +229,9 @@
       <div class="btn-row">
         <button class="btn-ghost" id="printBtn">พิมพ์บัตรสมาชิก</button>
         <a class="btn btn-ghost btn-sm hidden" id="printLink" target="_blank" rel="noopener">เปิดหน้าพิมพ์บัตร</a>
-        <button class="btn-danger btn-sm" id="delBtn">ลบสมาชิก</button>
+        <button class="btn-ghost btn-sm" id="renewBtn">ต่ออายุสมาชิก</button>
+        <button class="btn-ghost btn-sm" id="reissueBtn">ออกบัตรใบใหม่</button>
+        <button class="btn-danger btn-sm su-only" id="delBtn">ลบข้อมูลสมาชิก</button>
       </div>
       <div class="btn-row">
         <button class="btn-ghost" data-close="editModal">ปิด</button>
@@ -261,15 +263,15 @@ var WEBAPP_URL = <?!= jsonForScript_(WEBAPP_URL) ?>;
 var TOKEN = sessionStorage.getItem('br_token') || '';
 var ME = null, PAGE = 1, LOGPAGE = 1, CURRENT = null, ACTIONS = {}, FORCE_PW = false;
 var STATUSES = {pending:'รอตรวจสอบ',active:'สมาชิกปัจจุบัน',suspended:'ระงับชั่วคราว',expired:'หมดอายุ',revoked:'พ้นสมาชิกภาพ'};
-var MEMBER_TYPES = ['สามัญ','วิสามัญ','สมทบ','กิตติมศักดิ์'];
-var WORK_TYPES = ['สำนักงานสาธารณสุขจังหวัด','สำนักงานสาธารณสุขอำเภอ','โรงพยาบาล',
-  'โรงพยาบาลส่งเสริมสุขภาพตำบล','องค์กรปกครองส่วนท้องถิ่น','สถานศึกษา','ภาคเอกชน','อื่น ๆ'];
+var LISTS = <?!= jsonForScript_(LISTS) ?>;   /* ตัวเลือกชุดเดียวกับที่เซิร์ฟเวอร์ใช้ตรวจข้อมูล */
+var MEMBER_TYPES = LISTS.member_types, WORK_TYPES = LISTS.work_types;
+var OTHER = 'อื่นๆ';
 var SET_LABELS = {
   CLUB_NAME:'ชื่อชมรม', CLUB_NAME_EN:'ชื่อภาษาอังกฤษ (บนบัตร)', CLUB_ADDRESS:'ที่อยู่ชมรม (หลังบัตร)',
   CLUB_PHONE:'โทรศัพท์', CLUB_EMAIL:'อีเมล', PRESIDENT_NAME:'ชื่อประธานชมรม', PRESIDENT_TITLE:'ตำแหน่งประธาน',
   PRESIDENT_SIGN_ID:'รหัสไฟล์ลายเซ็นประธาน (Drive File ID)', LOGO_ID:'รหัสไฟล์ตราชมรม (Drive File ID)',
   DPO_NAME:'ผู้ประสานงานข้อมูลส่วนบุคคล', DPO_EMAIL:'อีเมลผู้ประสานงาน', DPO_PHONE:'โทรผู้ประสานงาน',
-  CARD_NOTE:'ข้อความท้ายบัตร', OPEN_REGISTER:'เปิดรับสมัคร (yes/no)'
+  CARD_NOTE:'ข้อความท้ายบัตร', OPEN_REGISTER:'เปิดรับสมัคร (yes/no)', TERM_YEARS:'อายุบัตรสมาชิก (ปี 1-10)'
 };
 
 /* ---------------- เริ่มต้น ---------------- */
@@ -295,6 +297,8 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('logNext').addEventListener('click', function(){ LOGPAGE++; loadLogs(); });
   document.getElementById('saveBtn').addEventListener('click', saveMember);
   document.getElementById('delBtn').addEventListener('click', deleteMember);
+  document.getElementById('renewBtn').addEventListener('click', renewMember);
+  document.getElementById('reissueBtn').addEventListener('click', reissueCard);
   document.getElementById('printBtn').addEventListener('click', printCard);
   document.getElementById('addSave').addEventListener('click', createMember);
   document.getElementById('addClear').addEventListener('click', function(){ buildForm('addForm','a',null); });
@@ -327,6 +331,15 @@ function showLogin(){
   closeModal('pwModal'); closeModal('editModal');
   /* ไม่ทิ้งรหัสผ่านที่พิมพ์ค้างไว้ให้ผู้ใช้คนถัดไปของแท็บนี้ */
   ['p','op','n1','n2'].forEach(function(i){ document.getElementById(i).value=''; });
+  /* ล้างข้อมูลที่แสดงค้างไว้ของผู้ใช้คนก่อน (รายชื่อ ประวัติ บัญชีผู้ดูแล ค่าตั้งค่า) และกลับไปแท็บแรก
+     ไม่เช่นนั้นผู้ที่เข้าสู่ระบบต่อในแท็บเดียวกันด้วยสิทธิ์ต่ำกว่าจะเห็นข้อมูลที่ตนไม่มีสิทธิ์ดู */
+  ['mbody','stats','logList','abody','setForm','editForm','addForm','pageInfo','logInfo'].forEach(function(i){
+    document.getElementById(i).innerHTML = '';
+  });
+  ['q','lq','xq'].forEach(function(i){ document.getElementById(i).value=''; });
+  document.getElementById('xfull').checked = false;
+  CURRENT = null; PAGE = 1; LOGPAGE = 1;
+  switchTab('members');
   document.getElementById('loginView').classList.remove('hidden');
   document.getElementById('appView').classList.add('hidden');
 }
@@ -367,11 +380,10 @@ function startApp(){
   document.querySelectorAll('.su-only').forEach(function(el){
     el.style.display = ME.role==='superadmin' ? '' : 'none';
   });
-  if(ME.role==='viewer'){
-    ['add'].forEach(function(t){
-      var b=document.querySelector('[data-tab="'+t+'"]'); if(b) b.style.display='none';
-    });
-  }
+  ['add'].forEach(function(t){
+    var b=document.querySelector('[data-tab="'+t+'"]'); if(b) b.style.display = ME.role==='viewer' ? 'none' : '';
+  });
+  switchTab('members');
   buildForm('addForm','a',null);
   loadStats(); loadMembers();
 }
@@ -426,7 +438,8 @@ function loadMembers(){
     } else {
       tb.innerHTML = r.items.map(function(m){
         return '<tr>'+
-          '<td style="white-space:nowrap;font-weight:600">'+esc(m.member_code)+'</td>'+
+          '<td style="white-space:nowrap;font-weight:600">'+(m.member_code ? esc(m.member_code)
+            : '<span style="font-weight:400;color:var(--ink-2)">ใบสมัคร<br>'+esc(m.app_no||'-')+'</span>')+'</td>'+
           '<td>'+esc(m.full_name)+'<br><small>'+esc(m.phone||'')+'</small></td>'+
           '<td>'+esc(m.position||'-')+'<br><small>'+esc(m.organization||'-')+'</small></td>'+
           '<td>'+esc(m.member_type||'-')+'</td>'+
@@ -459,29 +472,38 @@ function showAreaError(id, err, colspan){
 function buildForm(containerId, p, m){
   m = m || {};
   var ro = ME.role==='viewer';
+  var isEdit = !!m.id;
   function inp(id,label,type,attr){
     return '<div class="field"><label for="'+p+id+'">'+label+'</label>'+
       '<input id="'+p+id+'" type="'+(type||'text')+'" '+(attr||'')+(ro?' readonly':'')+
       ' value="'+esc(m[id]||'')+'"></div>';
   }
-  function sel(id,label,arr,blank){
-    var o = (blank?'<option value="">— เลือก —</option>':'') + arr.map(function(v){
+  /* ค่าเดิมที่ไม่อยู่ในรายการ (เช่นคำนำหน้าหรือประเภทหน่วยงานแบบเดิม) ต้องคงไว้เป็นตัวเลือก
+     ไม่เช่นนั้นกดบันทึกแล้วค่าเดิมจะหายไปเงียบ ๆ */
+  function opts(id, arr){
+    var cur = String(m[id]||'');
+    var vals = arr.map(function(v){ return typeof v==='object'? v.v : v; });
+    return (cur && vals.indexOf(cur) < 0) ? arr.concat([cur]) : arr;
+  }
+  function sel(id,label,arr,blank,extra){
+    var o = (blank?'<option value="">— เลือก —</option>':'') + opts(id,arr).map(function(v){
       var val = typeof v==='object'? v.v : v, txt = typeof v==='object'? v.t : v;
       return '<option value="'+esc(val)+'"'+(String(m[id]||'')===String(val)?' selected':'')+'>'+esc(txt)+'</option>';
     }).join('');
-    return '<div class="field"><label for="'+p+id+'">'+label+'</label><select id="'+p+id+'"'+(ro?' disabled':'')+'>'+o+'</select></div>';
+    return '<div class="field"><label for="'+p+id+'">'+label+'</label><select id="'+p+id+'"'+(ro?' disabled':'')+'>'+o+'</select>'+(extra||'')+'</div>';
   }
   var statusOpts = Object.keys(STATUSES).map(function(k){ return {v:k,t:STATUSES[k]}; });
+  var prefixOther = '<input id="'+p+'prefix_other" class="hidden" maxlength="40" placeholder="พิมพ์คำนำหน้า" style="margin-top:6px"'+(ro?' readonly':'')+'>';
 
   var html =
     '<div class="grid g3">'+
-      sel('prefix','คำนำหน้า',['นาย','นาง','นางสาว','ว่าที่ร้อยตรี','ดร.','นายแพทย์','แพทย์หญิง'],true)+
+      sel('prefix','คำนำหน้า',LISTS.prefixes.concat([OTHER]),true,prefixOther)+
       inp('first_name','ชื่อ','text','maxlength="60"')+
       inp('last_name','นามสกุล','text','maxlength="60"')+
     '</div><div class="grid g3" style="margin-top:14px">'+
       inp('national_id','เลขประจำตัวประชาชน','text','maxlength="13" inputmode="numeric"')+
       inp('birthdate','วันเกิด','date')+
-      sel('gender','เพศ',['ชาย','หญิง'],true)+
+      sel('gender','เพศ',LISTS.genders,true)+
     '</div><div class="grid g2" style="margin-top:14px">'+
       inp('position','ตำแหน่ง','text','maxlength="80"')+
       sel('work_type','ประเภทหน่วยงาน',WORK_TYPES,true)+
@@ -504,6 +526,10 @@ function buildForm(containerId, p, m){
     '</div><div class="grid" style="margin-top:14px">'+
       '<div class="field"><label for="'+p+'note">หมายเหตุ</label>'+
       '<textarea id="'+p+'note" maxlength="300"'+(ro?' readonly':'')+'>'+esc(m.note||'')+'</textarea></div>'+
+      (isEdit && !ro ?
+        '<div class="field"><label for="'+p+'reason">เหตุผลในการแก้ไข <span class="req">*</span></label>'+
+        '<textarea id="'+p+'reason" maxlength="300" placeholder="เช่น อนุมัติใบสมัคร, แก้ชื่อตามบัตรประชาชน, ย้ายหน่วยงาน"></textarea>'+
+        '<span class="help">บันทึกไว้ในประวัติการแก้ไขพร้อมรายการที่เปลี่ยน (บังคับกรอก)</span></div>' : '')+
     '</div>'+
     '<div class="media-box" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">'+
       '<div><div class="thumb" id="'+p+'photoThumb">'+
@@ -521,6 +547,9 @@ function buildForm(containerId, p, m){
   var c = document.getElementById(containerId);
   c.innerHTML = html;
   c.dataset.photo=''; c.dataset.sign='';
+  var ps = document.getElementById(p+'prefix');
+  ps.addEventListener('change', function(){ togglePrefixOther(p); });
+  togglePrefixOther(p);
   if(!ro){
     c.querySelector('#'+p+'photoFile').addEventListener('change', function(e){
       readImage(e.target.files[0],600,800,.86).then(function(d){
@@ -536,15 +565,23 @@ function buildForm(containerId, p, m){
     });
   }
 }
+/* คำนำหน้า "อื่นๆ" : แสดงช่องพิมพ์เอง */
+function togglePrefixOther(p){
+  var other = document.getElementById(p+'prefix').value === OTHER;
+  var box = document.getElementById(p+'prefix_other');
+  box.classList.toggle('hidden', !other);
+  if(!other) box.value = '';
+}
 function collectForm(containerId, p){
   var c = document.getElementById(containerId);
   var d = {};
   ['prefix','first_name','last_name','national_id','birthdate','gender','position','work_type',
    'organization','work_address','phone','email','line_id','member_type','education','license_no',
-   'status','issue_date','expire_date','note'].forEach(function(f){
+   'status','issue_date','expire_date','note','reason'].forEach(function(f){
     var el = document.getElementById(p+f);
     if(el) d[f] = (el.value||'').trim();
   });
+  if(d.prefix === OTHER) d.prefix = (document.getElementById(p+'prefix_other').value||'').trim();
   if(c.dataset.photo) d.photo_data = c.dataset.photo;
   if(c.dataset.sign) d.signature_data = c.dataset.sign;
   var rp = document.getElementById(p+'rmPhoto'), rs = document.getElementById(p+'rmSign');
@@ -554,6 +591,10 @@ function collectForm(containerId, p){
 }
 
 /* ---------------- เปิด/บันทึกสมาชิก ---------------- */
+var TERM_YEARS = 1;
+function memberRef(m){
+  return m.member_code ? 'เลขสมาชิก ' + m.member_code : 'เลขที่ใบสมัคร ' + (m.app_no || '-');
+}
 function openMember(id){
   /* ลิงก์พิมพ์บัตรสำรองเป็นของสมาชิกคนก่อน ต้องซ่อนทุกครั้งที่เปิดคนใหม่ */
   var pl = document.getElementById('printLink');
@@ -563,22 +604,30 @@ function openMember(id){
     loading(false);
     if(!r.ok) return toast(r.error, true);
     CURRENT = r.member;
+    if(r.meta && r.meta.term_years) TERM_YEARS = r.meta.term_years;
     document.getElementById('editTitle').textContent =
       (r.member.prefix||'') + r.member.first_name + ' ' + r.member.last_name;
     document.getElementById('editSub').textContent =
-      'เลขสมาชิก ' + r.member.member_code + ' · แก้ไขล่าสุด ' + thaiDateTime(r.member.updated_at) +
-      ' โดย ' + (r.member.updated_by||'-');
+      memberRef(r.member) + (r.member.member_code && r.member.app_no ? ' (ใบสมัคร ' + r.member.app_no + ')' : '') +
+      ' · แก้ไขล่าสุด ' + thaiDateTime(r.member.updated_at) + ' โดย ' + (r.member.updated_by||'-');
     buildForm('editForm','e', r.member);
     var ro = ME.role==='viewer';
-    document.getElementById('saveBtn').style.display = ro?'none':'';
-    document.getElementById('delBtn').style.display = ro?'none':'';
-    document.getElementById('printBtn').style.display = ro?'none':'';
+    ['saveBtn','printBtn','renewBtn','reissueBtn'].forEach(function(b){
+      document.getElementById(b).style.display = ro?'none':'';
+    });
+    /* ลบข้อมูลได้เฉพาะผู้ดูแลระดับสูงสุด (เซิร์ฟเวอร์ตรวจซ้ำ) */
+    document.getElementById('delBtn').style.display = ME.role==='superadmin' ? '' : 'none';
     openModal('editModal');
   }).catch(handleErr);
 }
 function saveMember(){
   if(!CURRENT) return;
   var d = collectForm('editForm','e');
+  if(!d.reason){
+    toast('กรุณาระบุเหตุผลในการแก้ไข เพื่อบันทึกไว้ในประวัติ', true);
+    var el = document.getElementById('ereason'); if(el) el.focus();
+    return;
+  }
   loading(true);
   call('apiUpdateMember', TOKEN, CURRENT.id, d, clientInfo()).then(function(r){
     loading(false);
@@ -593,21 +642,59 @@ function createMember(){
   call('apiCreateMember', TOKEN, d, clientInfo()).then(function(r){
     loading(false);
     if(!r.ok) return toast(r.error, true);
-    toast('เพิ่มสมาชิกแล้ว เลขสมาชิก ' + r.member_code);
+    toast('เพิ่มสมาชิกแล้ว ' + memberRef(r));
     buildForm('addForm','a',null);
     switchTab('members'); PAGE=1; loadMembers(); loadStats();
   }).catch(handleErr);
 }
+/* ลบถาวรตามกติกาเดียวกับระบบ envbrclub-supabase : ระบุเหตุผล + พิมพ์ชื่อ-นามสกุลยืนยัน
+   ผู้ที่เคยได้รับบัตรแล้วเซิร์ฟเวอร์จะปฏิเสธ (ให้เปลี่ยนสถานะเป็นพ้นสมาชิกภาพแทน) */
 function deleteMember(){
   if(!CURRENT) return;
-  var reason = prompt('ระบุเหตุผลในการลบสมาชิก ' + CURRENT.member_code + ' (บันทึกลงประวัติ)');
+  var name = CURRENT.first_name + ' ' + CURRENT.last_name;
+  var reason = prompt('ลบข้อมูล ' + memberRef(CURRENT) + ' ถาวร พร้อมรูปถ่ายและลายเซ็น (ย้อนกลับไม่ได้)\n' +
+    'ผู้ที่เคยได้รับบัตรสมาชิกแล้วลบไม่ได้ ให้แก้ไขสถานะเป็น "พ้นสมาชิกภาพ" แทน\n' +
+    'บันทึกความยินยอมและประวัติการใช้งานยังคงอยู่เป็นหลักฐาน\n\nระบุเหตุผลในการลบ (บันทึกลงประวัติ)');
   if(reason===null) return;
-  if(!confirm('ยืนยันลบสมาชิก ' + CURRENT.member_code + ' ?\nข้อมูลจะถูกซ่อนจากทะเบียนแต่ยังเก็บไว้ตามระยะเวลาที่นโยบายกำหนด')) return;
+  if(!reason.trim()) return toast('กรุณาระบุเหตุผลในการลบ', true);
+  var typed = prompt('พิมพ์ชื่อ-นามสกุลของสมาชิกเพื่อยืนยันการลบ (กันการกดพลาด)\nต้องพิมพ์ว่า: ' + name);
+  if(typed===null) return;
   loading(true);
-  call('apiDeleteMember', TOKEN, CURRENT.id, reason, clientInfo()).then(function(r){
+  call('apiDeleteMember', TOKEN, CURRENT.id, reason, typed, clientInfo()).then(function(r){
     loading(false);
     if(!r.ok) return toast(r.error, true);
-    toast('ลบสมาชิกแล้ว'); closeModal('editModal'); loadMembers(); loadStats();
+    toast('ลบข้อมูลสมาชิกแล้ว'); closeModal('editModal'); loadMembers(); loadStats();
+  }).catch(handleErr);
+}
+/* ต่ออายุตามกติกาของระบบ envbrclub-supabase : ยังไม่หมดอายุ = ต่อจากวันหมดอายุเดิม, หมดอายุแล้ว = เริ่มวันนี้ */
+function renewMember(){
+  if(!CURRENT) return;
+  var reason = prompt('ต่ออายุ ' + memberRef(CURRENT) + ' อีก ' + TERM_YEARS + ' ปี\n' +
+    'ถ้าบัตรยังไม่หมดอายุ ช่วงใหม่จะต่อจากวันหมดอายุเดิม ถ้าหมดอายุแล้วจะเริ่มนับวันนี้\n\n' +
+    'ระบุเหตุผล/หลักฐานการต่ออายุ (เช่น ชำระค่าบำรุงแล้ว ใบเสร็จเลขที่ ...)');
+  if(reason===null) return;
+  if(!reason.trim()) return toast('กรุณาระบุเหตุผลการต่ออายุ', true);
+  loading(true);
+  call('apiRenewMember', TOKEN, CURRENT.id, reason, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    toast('ต่ออายุแล้ว บัตรหมดอายุ ' + thaiDate(r.expire_date, true) + ' กรุณาพิมพ์บัตรใบใหม่');
+    loadMembers(); loadStats(); openMember(CURRENT.id);
+  }).catch(handleErr);
+}
+/* ออกบัตรใบใหม่ : เปลี่ยนรหัส QR บัตรใบเดิมใช้ตรวจสอบไม่ได้อีก */
+function reissueCard(){
+  if(!CURRENT) return;
+  var reason = prompt('ออกบัตรใบใหม่ให้ ' + memberRef(CURRENT) + '\n' +
+    'รหัส QR ของบัตรใบเดิมจะใช้ไม่ได้ทันที (สแกนแล้วจะไม่พบในระบบ) จากนั้นจึงพิมพ์บัตรใบใหม่\n\n' +
+    'ระบุเหตุผล (เช่น บัตรหาย ข้อมูลบนบัตรเปลี่ยน)');
+  if(reason===null) return;
+  if(!reason.trim()) return toast('กรุณาระบุเหตุผลการออกบัตรใบใหม่', true);
+  loading(true);
+  call('apiReissueCard', TOKEN, CURRENT.id, reason, clientInfo()).then(function(r){
+    loading(false);
+    if(!r.ok) return toast(r.error, true);
+    toast('ออกบัตรใบใหม่แล้ว บัตรใบเดิมใช้ไม่ได้ กรุณากด "พิมพ์บัตรสมาชิก" เพื่อพิมพ์บัตรใบใหม่');
   }).catch(handleErr);
 }
 function printCard(){

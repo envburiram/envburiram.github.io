@@ -59,10 +59,13 @@ oauth2.googleapis.com
 www.googleapis.com
 *.googleusercontent.com
 download.stackhawk.com
+auth.stackhawk.com
 api.stackhawk.com
 app.stackhawk.com
 ooovzjovkrfyuqakkpig.supabase.co
 ```
+
+`auth.stackhawk.com` จำเป็นสำหรับให้ hawk ยืนยันตัวตนก่อนสแกน ถ้าไม่มีจะล้มตั้งแต่ขั้นแรก
 
 ## 2. คำสั่งสำหรับวางในเซสชันใหม่
 

@@ -484,9 +484,13 @@ function setup() {
   // 6) ทริกเกอร์งานประจำ (ปรับสถานะหมดอายุ + ล้างข้อมูลชั่วคราว)
   ensureTrigger_('dailyMaintenance', 3);
 
+  // 7) URL ของเว็บแอป (QR หลังบัตรใช้ค่านี้) บันทึกให้เองถ้ายังว่างและหา URL ที่ใช้ได้
+  var webUrl = rememberWebAppUrl_(props);
+
   var out = 'ติดตั้งเรียบร้อย\nฐานข้อมูล : ' + s.getUrl() + msg +
-    '\n\nขั้นตอนถัดไป : Deploy > New deployment > Web app ' +
-    '(Execute as: Me, Who has access: Anyone) แล้วนำ URL มาใส่ที่ Script Property ชื่อ WEBAPP_URL';
+    (webUrl ? '\n\nWEBAPP_URL : ' + webUrl
+      : '\n\nขั้นตอนถัดไป : Deploy > New deployment > Web app ' +
+        '(Execute as: Me, Who has access: Anyone) แล้วนำ URL มาใส่ที่ Script Property ชื่อ WEBAPP_URL');
   Logger.log(out);
   // รหัสผ่านแสดงเฉพาะใน Execution log ไม่ส่งกลับเป็นค่าของฟังก์ชัน
   return 'ติดตั้งเรียบร้อย ดูรายละเอียดใน Execution log';
@@ -596,6 +600,22 @@ function ensureFolder_(propKey, name) {
 function ensureTrigger_(fn, hour) {
   var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === fn; });
   if (!exists) ScriptApp.newTrigger(fn).timeBased().atHour(hour).everyDays(1).create();
+}
+
+/**
+ * บันทึก URL ของเว็บแอปลง Script Property ชื่อ WEBAPP_URL ถ้ายังไม่ได้ตั้ง คืน URL ที่ใช้อยู่ หรือค่าว่างถ้าหาไม่ได้
+ * - ไม่เขียนทับค่าที่ตั้งไว้แล้ว เพราะ QR ในบัตรที่พิมพ์ไปแล้วฝัง URL เดิมไว้
+ * - รับเฉพาะ URL ที่ลงท้ายด้วย /exec เพราะในโหมดทดสอบ getUrl() คืน URL แบบ /dev ที่เปิดได้เฉพาะผู้แก้ไขสคริปต์
+ *   และคืน null ถ้ายังไม่ได้ deploy
+ */
+function rememberWebAppUrl_(props) {
+  var cur = props.getProperty('WEBAPP_URL');
+  if (cur) return cur;
+  var url = '';
+  try { url = String(ScriptApp.getService().getUrl() || ''); } catch (e) { url = ''; }
+  if (!/^https:\/\/script\.google\.com\/(a\/macros\/[^\/?#]+\/s|macros\/s)\/[A-Za-z0-9_-]+\/exec$/.test(url)) return '';
+  props.setProperty('WEBAPP_URL', url);
+  return url;
 }
 
 /** งานประจำวัน : ปรับสถานะบัตรหมดอายุ, ล้างเซสชันหมดอายุ, ล้างไฟล์ส่งออกเก่า */

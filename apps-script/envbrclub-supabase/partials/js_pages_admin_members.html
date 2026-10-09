@@ -8,6 +8,7 @@
 
     var rows = [];
     var orgTypes = [];
+    var me = "";   // อีเมลของผู้ดูแลที่เข้าสู่ระบบ ใช้ระบุผู้ส่งออกในไฟล์ Excel
 
     A.renderHeader("admin", "admin-members");
     A.renderFooter("../");
@@ -16,6 +17,7 @@
       .requireAdmin("admin-index", "members")
       .then(function (s) {
         if (!s) return null;
+        me = (s.user && s.user.email) || "";
         return Promise.all([A.loadSettings(), A.loadOrgTypes()]);
       })
       .then(function (r) {
@@ -143,6 +145,7 @@
             var name = window.ExcelExport.exportMembers(res.rows, {
               club: A.setting("club"),
               exportedAt: res.exported_at,
+              exportedBy: me,
               includePii: !!includePii
             });
             A.busy(btn, false);

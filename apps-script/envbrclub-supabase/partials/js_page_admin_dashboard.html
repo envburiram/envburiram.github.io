@@ -5,23 +5,46 @@
     A.renderHeader("admin", "admin-dashboard");
     A.renderFooter();
 
+    var perm = null;
+
     A.auth.requireAdmin("admin-index", "dashboard")
       .then(function (s) {
         if (!s) return null;
-        return Promise.all([
-          A.loadSettings(),
-          A.rpc("admin_stats"),
-          A.rpc("admin_system_health").catch(function () { return null; }),
-          A.rpc("admin_menu").catch(function () { return null; })
-        ]);
+        return A.rpc("admin_menu").catch(function () { return null; })
+          .then(function (p) {
+            perm = p;
+            /*
+            * ปรับสถานะสมาชิกและบัตรที่เลยวันหมดอายุให้อัตโนมัติทุกครั้งที่เปิดหน้าภาพรวม
+            * แบบเดียวกับงานประจำวันของระบบ envbrclub (dailyMaintenance) ไม่ต้องรอให้ผู้ดูแลกดปุ่มเอง
+            * ถ้าสถานะค้างเป็น "สมาชิกปัจจุบัน" ตัวเลขสถิติ การกรองทะเบียน และไฟล์ Excel จะคลาดเคลื่อน
+            * ทำเฉพาะบัญชีที่มีสิทธิ์งานทะเบียน (ฟังก์ชันฝั่งฐานข้อมูลตรวจสิทธิ์ซ้ำ)
+            * และบันทึกประวัติเฉพาะเมื่อมีรายการถูกปรับจริง ทำก่อนอ่านสถิติ ตัวเลขที่แสดงจึงเป็นปัจจุบัน
+            * ถ้าไม่สำเร็จให้หน้าภาพรวมแสดงตามปกติ ผู้ดูแลยังกดปุ่มเองได้
+            */
+            if (!p || !p.members) return null;
+            return A.rpc("admin_expire_memberships").catch(function () { return null; });
+          })
+          .then(function (sweep) {
+            return Promise.all([
+              A.loadSettings(),
+              A.rpc("admin_stats"),
+              A.rpc("admin_system_health").catch(function () { return null; }),
+              sweep
+            ]);
+          });
       })
       .then(function (r) {
         if (!r) return;
-        filterTools(r[3]);
+        filterTools(perm);
         renderHealth(r[2]);
         render(r[1]);
         A.$("#loading").hidden = true;
         A.$("#content").hidden = false;
+        var sw = r[3];
+        if (sw && (sw.members_expired || sw.cards_expired)) {
+          A.toast("ปรับสถานะที่เลยวันหมดอายุให้อัตโนมัติแล้ว: สมาชิก " + sw.members_expired +
+                  " ราย, บัตร " + sw.cards_expired + " ใบ", "ok", 7000);
+        }
       })
       .catch(function (e) {
         A.$("#loading").hidden = true;

@@ -20,7 +20,7 @@
   .hist-diff li { margin-bottom: 2px; }
   .hist-diff .from { color: var(--c-err-700); text-decoration: line-through; }
   .hist-diff .to { color: var(--c-ok-700); font-weight: 600; }
-  .filters { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; align-items: end; }
+  .filters { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: 10px; align-items: end; }
   @media (max-width: 860px) { .filters { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
@@ -60,6 +60,10 @@
           <input type="date" id="f-from">
         </div>
         <div class="field">
+          <label for="f-to">ถึงวันที่</label>
+          <input type="date" id="f-to">
+        </div>
+        <div class="field">
           <label for="f-q">ค้นหา (ชื่อ/อีเมล/เลขเอกสาร)</label>
           <input type="search" id="f-q">
         </div>
@@ -67,8 +71,13 @@
       <div class="btn-row mt-2">
         <button class="btn" id="btn-apply">กรองข้อมูล</button>
         <button class="btn btn-ghost" id="btn-clear">ล้างตัวกรอง</button>
+        <button class="btn btn-ghost" id="btn-xlsx">ส่งออก Excel ตามเงื่อนไข</button>
         <span class="small muted" id="count"></span>
       </div>
+      <p class="hint mt-1 mb-0">
+        การส่งออกประวัติถูกบันทึกไว้ในประวัติการใช้งานด้วย ไฟล์มีชื่อและอีเมลของบุคคล
+        กรุณาเก็บรักษาให้ปลอดภัยและลบเมื่อใช้งานเสร็จ (ส่งออกได้ครั้งละไม่เกิน 10,000 รายการ)
+      </p>
     </div>
 
     <div class="card">
@@ -83,6 +92,7 @@
 <footer id="site-footer"></footer>
 
 <?!= include('partials/vendor_supabase'); ?>
+<?!= include('partials/vendor_xlsx'); ?>
 <script>
   /*
   * ค่าที่ต้องมาจากฝั่งเซิร์ฟเวอร์ของ Google Apps Script
@@ -98,6 +108,7 @@
 <?!= include('partials/js_config'); ?>
 <?!= include('partials/js_app'); ?>
 <?!= include('partials/js_lib_audit_view'); ?>
+<?!= include('partials/js_lib_excel'); ?>
 <?!= include('partials/js_page_admin_audit'); ?>
 </body>
 </html>

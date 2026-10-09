@@ -74,12 +74,26 @@
 
     /*
     * กันข้อมูลที่สมาชิกกรอกเอง (ชื่อหน่วยงาน ตำแหน่ง ฯลฯ) กลายเป็นสูตรเมื่อเปิดด้วย Excel
-    * ถ้าค่าขึ้นต้นด้วย = + - @ หรือแท็บ/ตัวขึ้นบรรทัดใหม่ ให้เติมเครื่องหมาย ' นำหน้า
+    * ถ้าค่าขึ้นต้นด้วย = + - @ หรือแท็บ/ตัวขึ้นบรรทัดใหม่ (CR หรือ LF) ให้เติมเครื่องหมาย ' นำหน้า
     * Excel จะอ่านเป็นข้อความล้วน ไม่ตีความเป็นสูตร (มาตรฐาน OWASP CSV/Formula Injection)
+    * ต้องรวม LF ด้วย (แบบเดียวกับ formulaSafe_ ของระบบ envbrclub) เพราะค่าที่ขึ้นบรรทัดใหม่ก่อนสูตร
+    * จะกลายเป็นสูตรเมื่อผู้ดูแลบันทึกไฟล์ต่อเป็น CSV แล้วเปิดใหม่
     */
     function sanitizeCell(v) {
       if (typeof v !== "string") return v;
-      return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+      return /^[=+\-@\t\r\n]/.test(v) ? "'" + v : v;
+    }
+
+    /*
+    * วันที่ของวันนี้ตามเวลาในเครื่อง (ประเทศไทย) รูปแบบ YYYY-MM-DD สำหรับตั้งชื่อไฟล์
+    * ห้ามใช้ toISOString() เพราะเป็นเวลา UTC ไฟล์ที่ส่งออกช่วง 00:00-06:59 น. จะได้วันที่ของเมื่อวาน
+    */
+    function todayStamp() {
+      var A = global.App;
+      if (A) return A.fmt.isoDate(new Date());
+      var d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" +
+        String(d.getDate()).padStart(2, "0");
     }
 
     /** เตรียมแถวข้อมูลให้อ่านง่ายในภาษาไทย */
@@ -162,6 +176,8 @@
         ["รายงานสรุปทะเบียนสมาชิก"],
         [""],
         ["วันที่ส่งออกข้อมูล", thaiDate(meta.exportedAt || new Date())],
+        // ระบุผู้ส่งออกไว้ในไฟล์ด้วย (แบบเดียวกับไฟล์ส่งออกของระบบ envbrclub) ถ้าไฟล์หลุดออกไปจะรู้ว่าใครเป็นผู้ครอบครอง
+        ["ผู้ส่งออกข้อมูล", sanitizeCell(meta.exportedBy || "(ไม่ทราบ)")],
         ["จำนวนสมาชิกทั้งหมด", data.length],
         ["ค่าธรรมเนียมที่รับแล้ว (บาท)", totalFee],
         ["ข้อมูลส่วนบุคคลอ่อนไหว", meta.includePii === false ? "ปิดบัง (ไม่รวมเลขบัตร/เบอร์โทร/ที่อยู่)" : "รวมอยู่ในไฟล์"],
@@ -190,12 +206,94 @@
       ws2["!cols"] = [{ wch: 46 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, ws2, "สรุป");
 
-      var name = "ทะเบียนสมาชิกชมรมอนามัยสิ่งแวดล้อมบุรีรัมย์-" +
-        new Date().toISOString().slice(0, 10) + ".xlsx";
+      var name = "ทะเบียนสมาชิกชมรมอนามัยสิ่งแวดล้อมบุรีรัมย์-" + todayStamp() + ".xlsx";
       XLSX.writeFile(wb, name, { compression: true });
       return name;
     }
 
-    global.ExcelExport = { exportMembers: exportMembers, COLUMNS: COLUMNS, prepare: prepare };
+    /* Excel จำกัดข้อความในหนึ่งช่องไว้ 32,767 ตัวอักษร */
+    var MAX_CELL = 32000;
+
+    /** รายละเอียดการเปลี่ยนแปลงของหนึ่งรายการประวัติ เป็นข้อความบรรทัดเดียว */
+    function auditChanges(r, V) {
+      if (!r.changed || typeof r.changed !== "object") return "";
+      return Object.keys(r.changed).filter(function (k) {
+        return k !== "id" && k !== "user_id";
+      }).map(function (k) {
+        var c = r.changed[k];
+        var label = V ? V.fieldLabel(k) : k;
+        if (c && c.changed === true) return label + ": มีการเปลี่ยนแปลง (ไม่บันทึกค่าที่เข้ารหัส)";
+        if (c && (Object.prototype.hasOwnProperty.call(c, "from") ||
+                  Object.prototype.hasOwnProperty.call(c, "to"))) {
+          return label + ": " + (V ? V.fmtValue(k, c.from) : String(c.from)) + " → " +
+            (V ? V.fmtValue(k, c.to) : String(c.to));
+        }
+        return label + ": " + (V ? V.fmtValue(k, c) : JSON.stringify(c));
+      }).join(" | ");
+    }
+
+    /**
+     * ส่งออกประวัติการใช้งานระบบเป็นไฟล์ .xlsx
+     * (ระบบ envbrclub ส่งออกประวัติได้ตั้งแต่แรก ระบบนี้เดิมดูได้บนหน้าเว็บอย่างเดียว)
+     * @param {array} rows แถวจากตาราง audit_log
+     * @param {object} meta { club, exportedBy, filterText }
+     */
+    function exportAudit(rows, meta) {
+      var XLSX = global.XLSX;
+      if (!XLSX) throw new Error("ไม่พบ SheetJS - ต้องรวม partials/vendor_xlsx (CDN) ก่อน");
+      var A = global.App;
+      var V = global.AuditView;
+      meta = meta || {};
+
+      var head = ["วันเวลา", "ผู้ดำเนินการ", "บทบาท", "การกระทำ", "ประเภทข้อมูล",
+                  "รายการ", "รหัสรายการ", "หมายเหตุ", "รายละเอียดการเปลี่ยนแปลง"];
+      var body = (rows || []).map(function (r) {
+        var cells = [
+          A ? A.fmt.thaiDateTime(r.at) : String(r.at || ""),
+          r.actor_email || "(ระบบ)",
+          (V && V.ROLE[r.actor_role]) || r.actor_role || "",
+          (V && V.ACTION[r.action]) || r.action || "",
+          (V && V.ENTITY[r.entity]) || r.entity || "",
+          r.entity_label || "",
+          r.entity_id || "",
+          r.note || "",
+          auditChanges(r, V)
+        ];
+        return cells.map(function (v) {
+          var s = v === null || v === undefined ? "" : String(v);
+          if (s.length > MAX_CELL) s = s.slice(0, MAX_CELL) + "…";
+          return sanitizeCell(s);
+        });
+      });
+
+      var title = [
+        [sanitizeCell((meta.club && meta.club.name) || "ชมรมอนามัยสิ่งแวดล้อมจังหวัดบุรีรัมย์")],
+        ["รายงานประวัติการใช้งานระบบ ณ วันที่ " + thaiDate(new Date()) + " จำนวน " + body.length + " รายการ"],
+        ["ผู้ส่งออกข้อมูล: " + (meta.exportedBy || "(ไม่ทราบ)")],
+        ["เงื่อนไข: " + (meta.filterText || "ทั้งหมด")],
+        [""]
+      ];
+      var ws = XLSX.utils.aoa_to_sheet(title.concat([head]).concat(body));
+      ws["!cols"] = [18, 28, 20, 26, 16, 30, 24, 40, 80].map(function (w) { return { wch: w }; });
+      ws["!autofilter"] = {
+        ref: XLSX.utils.encode_range({
+          s: { r: title.length, c: 0 },
+          e: { r: title.length + body.length, c: head.length - 1 }
+        })
+      };
+
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "ประวัติการใช้งาน");
+      var name = "ประวัติการใช้งานระบบชมรมอนามัยสิ่งแวดล้อมบุรีรัมย์-" + todayStamp() + ".xlsx";
+      XLSX.writeFile(wb, name, { compression: true });
+      return name;
+    }
+
+    global.ExcelExport = {
+      exportMembers: exportMembers,
+      exportAudit: exportAudit,
+      COLUMNS: COLUMNS,
+      prepare: prepare
+    };
   })(typeof window !== "undefined" ? window : this);
 </script>

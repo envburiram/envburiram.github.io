@@ -5,6 +5,11 @@
     var PAGE = 50;
     var offset = 0;
     var rows = [];
+    var me = "";   // อีเมลของผู้ดูแลที่เข้าสู่ระบบ ใช้ระบุผู้ส่งออกในไฟล์ Excel
+
+    /* ส่งออกได้ครั้งละไม่เกินจำนวนนี้ ดึงจากฐานข้อมูลทีละชุด */
+    var EXPORT_BATCH = 1000;
+    var EXPORT_MAX = 10000;
 
     A.renderHeader("admin", "admin-audit");
     A.renderFooter();
@@ -12,6 +17,7 @@
     A.auth.requireAdmin("admin-index", "audit")
       .then(function (s) {
         if (!s) return null;
+        me = (s.user && s.user.email) || "";
 
         var sel = A.$("#f-action");
         Object.keys(window.AuditView.ACTION).forEach(function (k) {
@@ -23,10 +29,12 @@
           A.$("#f-entity").value = "";
           A.$("#f-action").value = "";
           A.$("#f-from").value = "";
+          A.$("#f-to").value = "";
           A.$("#f-q").value = "";
           reset();
         });
         A.$("#btn-more").addEventListener("click", function () { load(); });
+        A.$("#btn-xlsx").addEventListener("click", function () { exportXlsx(this); });
         A.$("#f-q").addEventListener("keydown", function (e) {
           if (e.key === "Enter") reset();
         });
@@ -38,6 +46,54 @@
           '<div class="alert alert-err mb-0"><div>' + A.esc(A.errMsg(e)) + "</div></div>";
       });
 
+    /*
+    * อ่านเงื่อนไขจากฟอร์ม คืน null ถ้าเงื่อนไขขัดกันเอง
+    *
+    * ช่องวันที่ให้ค่า YYYY-MM-DD ซึ่ง new Date() ตีความเป็นเที่ยงคืนของเวลา UTC
+    * (= 07:00 น. เวลาไทย) ตัวกรองเดิมจึงตกรายการช่วง 00:00-06:59 น. ของวันแรกไป
+    * ต้องแปลงเป็นเที่ยงคืนตามเวลาในเครื่องด้วย A.toDate ก่อน (ระบบ envbrclub เทียบวันที่ตามเวลาไทยมาแต่แรก)
+    */
+    function filters() {
+      var f = {
+        entity: A.$("#f-entity").value,
+        action: A.$("#f-action").value,
+        from: A.toDate(A.$("#f-from").value),
+        to: A.toDate(A.$("#f-to").value),
+        text: A.$("#f-q").value.trim()
+      };
+      if (f.from && f.to && f.from > f.to) {
+        A.toast("วันที่เริ่มต้นต้องไม่อยู่หลังวันที่สิ้นสุด", "warn");
+        return null;
+      }
+      return f;
+    }
+
+    /** สร้างคำค้นใหม่ทุกครั้ง เพราะตัวสร้างคำค้นของ supabase-js เปลี่ยนค่าในตัวเองเมื่อเติมเงื่อนไข */
+    function buildQuery(f) {
+      var q = A.sb.from("audit_log").select("*", { count: "exact" })
+        .order("at", { ascending: false })
+        // เรียงตามเลขรายการด้วย รายการที่เวลาเท่ากันจะไม่สลับที่กันระหว่างโหลดทีละหน้า
+        .order("id", { ascending: false });
+
+      if (f.entity) q = q.eq("entity", f.entity);
+      if (f.action) q = q.eq("action", f.action);
+      if (f.from) q = q.gte("at", f.from.toISOString());
+      if (f.to) {
+        var end = new Date(f.to.getFullYear(), f.to.getMonth(), f.to.getDate() + 1);
+        q = q.lt("at", end.toISOString());
+      }
+      if (f.text) {
+        // ตัดอักขระที่มีความหมายพิเศษในตัวกรอง or ของ PostgREST ทิ้ง
+        var esc = f.text.replace(/[%,()"\\]/g, " ");
+        q = q.or(
+          "entity_label.ilike.%" + esc + "%," +
+          "actor_email.ilike.%" + esc + "%," +
+          "note.ilike.%" + esc + "%"
+        );
+      }
+      return q;
+    }
+
     function reset() {
       offset = 0;
       rows = [];
@@ -46,28 +102,12 @@
     }
 
     function load() {
-      var q = A.sb.from("audit_log").select("*", { count: "exact" })
-        .order("at", { ascending: false })
-        .range(offset, offset + PAGE - 1);
-
-      var entity = A.$("#f-entity").value;
-      var action = A.$("#f-action").value;
-      var from = A.$("#f-from").value;
-      var text = A.$("#f-q").value.trim();
-
-      if (entity) q = q.eq("entity", entity);
-      if (action) q = q.eq("action", action);
-      if (from) q = q.gte("at", new Date(from).toISOString());
-      if (text) {
-        var esc = text.replace(/[%,()]/g, " ");
-        q = q.or(
-          "entity_label.ilike.%" + esc + "%," +
-          "actor_email.ilike.%" + esc + "%," +
-          "note.ilike.%" + esc + "%"
-        );
+      var f = filters();
+      if (!f) {
+        if (!rows.length) A.$("#list").innerHTML = "";
+        return Promise.resolve();
       }
-
-      return q.then(function (res) {
+      return buildQuery(f).range(offset, offset + PAGE - 1).then(function (res) {
         if (res.error) throw res.error;
         var got = res.data || [];
         rows = rows.concat(got);
@@ -83,6 +123,85 @@
       }).catch(function (e) {
         A.$("#list").innerHTML =
           '<div class="alert alert-err mb-0"><div>' + A.esc(A.errMsg(e)) + "</div></div>";
+      });
+    }
+
+    /* ---------- ส่งออก Excel ---------- */
+    function describe(f) {
+      var parts = [];
+      if (f.entity) parts.push("ประเภทข้อมูล " + (window.AuditView.ENTITY[f.entity] || f.entity));
+      if (f.action) parts.push("การกระทำ " + (window.AuditView.ACTION[f.action] || f.action));
+      if (f.from) parts.push("ตั้งแต่ " + A.fmt.thaiDate(f.from));
+      if (f.to) parts.push("ถึง " + A.fmt.thaiDate(f.to));
+      if (f.text) parts.push('ค้นหา "' + f.text + '"');
+      return parts.length ? parts.join(", ") : "ทั้งหมด";
+    }
+
+    /** ดึงทุกรายการตามเงื่อนไขทีละชุด ตัดรายการซ้ำที่อาจเกิดเมื่อมีประวัติใหม่เข้ามาระหว่างดึง */
+    function fetchAll(f) {
+      var out = [], seen = {};
+      function next(from) {
+        return buildQuery(f).range(from, from + EXPORT_BATCH - 1).then(function (res) {
+          if (res.error) throw res.error;
+          var got = res.data || [];
+          got.forEach(function (r) {
+            if (seen[r.id]) return;
+            seen[r.id] = 1;
+            out.push(r);
+          });
+          var total = typeof res.count === "number" ? res.count : null;
+          var more = got.length > 0 && from + got.length < (total === null ? Infinity : total);
+          if (total === null && got.length < EXPORT_BATCH) more = false;
+          if (!more || out.length >= EXPORT_MAX) return out.slice(0, EXPORT_MAX);
+          return next(from + got.length);
+        });
+      }
+      return next(0);
+    }
+
+    function exportXlsx(btn) {
+      var f = filters();
+      if (!f) return;
+      var desc = describe(f);
+      A.confirm("ส่งออกประวัติการใช้งาน",
+        "ไฟล์จะมีประวัติการใช้งานตามเงื่อนไข (" + desc + ") ซึ่งมีชื่อและอีเมลของบุคคล " +
+        "ท่านมีหน้าที่เก็บรักษาไฟล์ให้ปลอดภัยและลบเมื่อใช้งานเสร็จ การส่งออกครั้งนี้จะถูกบันทึกไว้ในระบบ",
+        { okText: "ส่งออกไฟล์" }
+      ).then(function (ok) {
+        if (!ok) return;
+        A.busy(btn, true, "กำลังเตรียมไฟล์...");
+        fetchAll(f)
+          .then(function (all) {
+            if (!all.length) {
+              A.busy(btn, false);
+              A.toast("ไม่พบประวัติที่ตรงกับเงื่อนไข", "warn");
+              return null;
+            }
+            /*
+            * บันทึกการส่งออกก่อนสร้างไฟล์ ถ้าบันทึกไม่สำเร็จจะไม่ส่งออก
+            * ทุกไฟล์ที่ออกจากระบบจึงมีร่องรอยว่าใครส่งออก เมื่อใด และกี่รายการ
+            */
+            return A.rpc("log_client_event", {
+              p_action: "export_excel",
+              p_entity: "audit_log",
+              p_entity_id: null,
+              p_note: "ส่งออกประวัติการใช้งาน " + all.length + " รายการ (" + desc + ")"
+            }).then(function () {
+              var name = window.ExcelExport.exportAudit(all, {
+                club: A.setting("club"),
+                exportedBy: me,
+                filterText: desc
+              });
+              A.busy(btn, false);
+              A.toast("ส่งออกไฟล์ " + name + " (" + A.fmt.int(all.length) + " รายการ)" +
+                (all.length >= EXPORT_MAX ? " ครบเพดาน กรุณาแบ่งช่วงวันที่ถ้าต้องการมากกว่านี้" : ""),
+                all.length >= EXPORT_MAX ? "warn" : "ok", 8000);
+            });
+          })
+          .catch(function (e) {
+            A.busy(btn, false);
+            A.toast(A.errMsg(e), "err", 9000);
+          });
       });
     }
   })();

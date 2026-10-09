@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: envbrclub-supabase public pages (Apps Script web app)
+  version: "1"
+servers:
+  - url: https://script.google.com
+paths:
+  /macros/s/AKfycbycjJDIum4tzh6fPtGHiExtSS7Yho5FDvEExLp0ioMSGo6onwWSx5FSqt_S2cBLHjxkdQ/exec:
+    get:
+      summary: หน้า public ของเว็บแอป (GET อย่างเดียว)
+      parameters:
+        # HawkScan ใช้เฉพาะค่าแรกของ enum เป็นหน้าที่สแกน (ดูคอมเมนต์ใน stackhawk.yml)
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [index, verify, privacy, terms]
+        - name: t
+          in: query
+          required: false
+          description: รหัสตรวจสอบบัตร (หน้า verify)
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: false
+          description: ชื่อเดิมของ t
+          schema:
+            type: string
+        - name: host
+          in: query
+          required: false
+          description: ลิงก์หน้าครอบบน Firebase Hosting
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML
+          content:
+            text/html:
+              schema:
+                type: string

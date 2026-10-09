@@ -1,0 +1,42 @@
+# HawkScan: สแกนเฉพาะหน้า public ของเว็บแอป Apps Script (envbrclub-supabase) ด้วย GET อย่างเดียว
+# ไม่มีคีย์ในไฟล์นี้ ห้ามใส่คีย์ลงไฟล์ (repo เป็นสาธารณะ)
+# วิธีรัน: cd apps-script/envbrclub-supabase && API_KEY=$HAWK_API_KEY hawk scan stackhawk.yml
+# deploymentId อยู่ใน includePaths และใน openapi.yaml ถ้าเปลี่ยน deployment ต้องแก้ทั้งสองที่
+# ไฟล์ .yml/.yaml ไม่ถูก clasp push ขึ้น Apps Script
+app:
+  applicationId: ${APP_ID:2ecddb1b-b344-49ae-a18b-abaf90a9c3ac}
+  env: ${APP_ENV:Production}
+  host: ${APP_HOST:https://script.google.com}
+  # openapi.yaml ประกาศ GET /exec ตัวเดียว HawkScan ขอหน้าตามค่าแรกของ enum page เท่านั้น
+  # (สแกนวันที่ 2026-10-09 ครอบคลุมแค่ page=index) ถ้าจะสแกนหน้าอื่นให้ย้ายค่านั้นขึ้นเป็นค่าแรกของ enum แล้วสแกนใหม่
+  openApiConf:
+    filePath: openapi.yaml
+  # จำกัดเฉพาะ /exec ของ deployment นี้ ไม่แตะส่วนอื่นของ script.google.com
+  includePaths:
+    - ".*/macros/s/AKfycbycjJDIum4tzh6fPtGHiExtSS7Yho5FDvEExLp0ioMSGo6onwWSx5FSqt_S2cBLHjxkdQ/exec.*"
+  excludePaths:
+    # google.script.run (ส่งใบสมัคร เข้าสู่ระบบ ฯลฯ) ห้ามแตะ
+    - ".*/callback.*"
+    # หน้าเข้าสู่ระบบ ฟอร์ม และหน้าผู้ดูแล
+    - ".*[?&]page=(login|register|apply|payment|forgot|reset|card|receipt|admin-[a-z-]+|app)([&#].*)?$"
+hawk:
+  spider:
+    # ไม่ไล่ลิงก์เอง ใช้เฉพาะ URL จาก openapi.yaml
+    base: false
+    # ไม่ใช้ ajax spider เพราะจะรัน JS และกดปุ่มในหน้า ซึ่งอาจส่งฟอร์มจริง
+    ajax: false
+    maxDurationMinutes: 2
+  scan:
+    # ยิงช้า ๆ เพื่อไม่ให้กินโควตา Apps Script จนสมาชิกจริงใช้งานไม่ได้
+    concurrentRequests: 2
+    requestDelayMillis: 1000
+    maxDurationMinutes: 30
+tags:
+  - name: _STACKHAWK_AGENT
+    value: ${HAWK_AGENT:none}
+  - name: _STACKHAWK_GIT_COMMIT_SHA
+    value: ${COMMIT_SHA:none}
+  - name: _STACKHAWK_GIT_BRANCH
+    value: ${BRANCH_NAME:none}
+  - name: git_origin
+    value: envburiram/envburiram.github.io

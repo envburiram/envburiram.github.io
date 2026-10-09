@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+  title: envbrclub public pages (Apps Script web app)
+  version: "1"
+servers:
+  - url: https://script.google.com
+paths:
+  /macros/s/AKfycbzOaotW-eCRj_l1NbG28z8DQ9FFqVrMTxRgk9DpFzx9cBQ2AgAnUoqiCx2f21J8z9PlKQ/exec:
+    get:
+      summary: หน้า public ของเว็บแอป (GET อย่างเดียว)
+      parameters:
+        # HawkScan ใช้เฉพาะค่าแรกของ enum เป็นหน้าที่สแกน (ดูคอมเมนต์ใน stackhawk.yml)
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [register, verify, privacy]
+        - name: t
+          in: query
+          required: false
+          description: รหัสตรวจสอบบัตร (หน้า verify)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML
+          content:
+            text/html:
+              schema:
+                type: string

@@ -98,15 +98,15 @@ function doGet(e) {
   try {
     switch (page) {
       case 'admin':
-        return render_('Admin', 'ผู้ดูแลระบบ · ' + APP.SHORT, null, false);
+        return render_('Admin', 'ผู้ดูแลระบบ · ' + APP.SHORT, null);
       case 'verify':
-        return render_('Verify', 'ตรวจสอบสมาชิก · ' + APP.SHORT, { t: cleanToken_(p.t) }, true);
+        return render_('Verify', 'ตรวจสอบสมาชิก · ' + APP.SHORT, { t: cleanToken_(p.t) });
       case 'card':
-        return render_('Card', 'บัตรสมาชิก', { pt: cleanToken_(p.pt) }, false);
+        return render_('Card', 'บัตรสมาชิก', { pt: cleanToken_(p.pt) });
       case 'privacy':
-        return render_('Privacy', 'ประกาศความเป็นส่วนตัว · ' + APP.SHORT, null, true);
+        return render_('Privacy', 'ประกาศความเป็นส่วนตัว · ' + APP.SHORT, null);
       default:
-        return render_('Register', 'สมัครสมาชิก · ' + APP.SHORT, null, true);
+        return render_('Register', 'สมัครสมาชิก · ' + APP.SHORT, null);
     }
   } catch (err) {
     return HtmlService.createHtmlOutput(
@@ -116,10 +116,11 @@ function doGet(e) {
 }
 
 /**
- * allowEmbed : ให้เว็บอื่นฝังหน้าใน iframe ได้ (เฉพาะหน้าสาธารณะ)
- * หน้าผู้ดูแลและหน้าบัตรห้ามฝัง เพื่อกัน clickjacking
+ * ทุกหน้าห้ามเว็บอื่นฝังใน iframe (XFrameOptionsMode.DEFAULT) เพื่อกัน clickjacking
+ * ถ้าต้องให้ฝังได้ ให้ใช้แนวทางของ envbrclub-supabase คือ ALLOWALL คู่กับสคริปต์ที่ยอมเฉพาะโดเมนที่กำหนด
+ * ห้ามเปิด ALLOWALL อย่างเดียว เพราะเว็บใดก็ซ้อนหน้านี้ไว้ใต้หน้าปลอมได้
  */
-function render_(file, title, params, allowEmbed) {
+function render_(file, title, params) {
   var t = HtmlService.createTemplateFromFile(file);
   t.APP = APP;
   t.PARAMS = params || {};
@@ -129,7 +130,7 @@ function render_(file, title, params, allowEmbed) {
   return t.evaluate()
     .setTitle(title)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5')
-    .setXFrameOptionsMode(allowEmbed ? HtmlService.XFrameOptionsMode.ALLOWALL : HtmlService.XFrameOptionsMode.DEFAULT);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
 /** โทเคนในลิงก์เป็น base64 แบบ web-safe เท่านั้น ค่าอื่นทิ้งไป */

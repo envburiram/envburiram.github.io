@@ -322,6 +322,111 @@
       return "x-xxxx-xxxxx-xx-" + d[12] + " (ลงท้าย " + d.slice(9) + ")";
     }
 
+    /*
+    * ตรวจข้อมูลสมาชิกตามเกณฑ์เดียวกับทริกเกอร์ app_private.members_validate ในฐานข้อมูล
+    * ตรวจก่อนอัปโหลดไฟล์และก่อนบันทึก ผู้ใช้เห็นข้อความทันที และไม่มีไฟล์รูป/ลายเซ็นค้าง
+    * จากการบันทึกที่ถูกปฏิเสธ (สมาชิกลบไฟล์ที่อัปโหลดแล้วเองไม่ได้)
+    * ฐานข้อมูลยังตรวจซ้ำเสมอ ส่วนนี้ช่วยผู้ใช้เท่านั้น
+    *
+    * ตรวจเฉพาะช่องที่ค่าต่างจากตอนเปิดฟอร์ม (orig) เหมือนฝั่งฐานข้อมูล
+    * ข้อมูลเดิมที่ไม่ตรงเกณฑ์จึงไม่ขวางการแก้ช่องอื่น
+    */
+    var MEMBER_CHECK_FIELDS = ["birth_date", "email", "phone", "license_issued_on",
+                               "license_expires_on", "valid_from", "valid_to"];
+
+    // เลขไทย ๐-๙ เป็นเลขอารบิก (แป้นพิมพ์ภาษาไทยบนคอมพิวเตอร์พิมพ์เลขไทยได้)
+    function arabicDigits(s) {
+      return String(s == null ? "" : s).replace(/[\u0E50-\u0E59]/g, function (c) {
+        return String(c.charCodeAt(0) - 0x0E50);
+      });
+    }
+
+    // วันนี้ตามเวลาประเทศไทย (UTC+7 ไม่มีเวลาออมแสง) รูปแบบ YYYY-MM-DD
+    function bangkokToday() {
+      return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+    }
+
+    /*
+    * วันที่ YYYY-MM-DD เป็นตัวเลขเพื่อเทียบกัน (ช่องวันที่ของเบราว์เซอร์ยอมให้พิมพ์ปี 5-6 หลัก
+    * ถ้าเทียบเป็นข้อความ "19900-05-01" จะน้อยกว่า "2026-..." และหลุดการตรวจ)
+    */
+    function dateKey(s) {
+      var m = /^(\d{4,6})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+      return m ? (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]) : NaN;
+    }
+
+    // ค่าของช่องที่ต้องตรวจตอนเปิดฟอร์ม ใช้เป็น orig ของ memberFieldErrors()
+    // phone_raw = ค่าที่แสดงอยู่เดิม ใช้ส่งกลับเมื่อผู้ใช้ไม่ได้แก้ (ไม่ให้ฐานข้อมูลเห็นว่าข้อความเปลี่ยน)
+    function memberFieldSnapshot() {
+      var o = {};
+      MEMBER_CHECK_FIELDS.forEach(function (k) {
+        var e = $("#" + k);
+        o[k] = e ? String(e.value || "").trim() : "";
+      });
+      o.phone_raw = o.phone;
+      o.phone = arabicDigits(o.phone);
+      return o;
+    }
+
+    /**
+    * @param {object} p ค่าที่จะส่งให้ฐานข้อมูล (ชื่อช่องเดียวกับ RPC)
+    * @param {object} orig ค่าตอนเปิดฟอร์ม (ไม่มี = ตรวจทุกช่องที่กรอก)
+    * @return {array} [{ field, msg }] ว่าง = ผ่าน
+    */
+    function memberFieldErrors(p, orig) {
+      var o = orig || {};
+      var out = [];
+      function val(k) { return String(p[k] == null ? "" : p[k]).trim(); }
+      function changed() {
+        for (var i = 0; i < arguments.length; i++) {
+          if (val(arguments[i]) !== String(o[arguments[i]] || "")) return true;
+        }
+        return false;
+      }
+
+      var bd = val("birth_date");
+      var bk = dateKey(bd);
+      if (bd && changed("birth_date") && !(bk >= 19000101 && bk <= dateKey(bangkokToday()))) {
+        var y = Math.floor(bk / 10000);
+        var msg;
+        if (isNaN(bk) || y < 1900 || y > 9999) {
+          msg = "วันเกิดไม่ถูกต้อง กรุณากรอกปีเป็น ค.ศ. 4 หลัก (ตั้งแต่ 1900)";
+        } else if (y > 2400) {
+          msg = "วันเกิด: ปี " + y + " เป็นปี พ.ศ. กรุณาเลือกปี ค.ศ. " + (y - 543) +
+                " ในปฏิทิน (ระบบแสดงเป็น พ.ศ. ให้เอง)";
+        } else {
+          msg = "วันเกิดไม่ถูกต้อง (ต้องไม่อยู่ในอนาคต)";
+        }
+        out.push({ field: "birth_date", msg: msg });
+      }
+
+      var em = val("email");
+      if (em && changed("email") &&
+          (em.length > 120 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em))) {
+        out.push({ field: "email", msg: "รูปแบบอีเมลไม่ถูกต้อง (เว้นว่างได้หากไม่มีอีเมล)" });
+      }
+
+      var ph = val("phone");
+      if (ph && changed("phone")) {
+        var n = ph.replace(/\D/g, "").length;
+        if (ph.length > 20 || !/^[0-9+() .-]+$/.test(ph) || n < 9 || n > 15) {
+          out.push({ field: "phone", msg: "เบอร์โทรศัพท์มือถือไม่ถูกต้อง (ใส่ได้เบอร์เดียว ตัวเลข 9-15 หลัก " +
+                                          "ใช้ได้เฉพาะตัวเลข เว้นวรรค - + และวงเล็บ)" });
+        }
+      }
+
+      var li = val("license_issued_on"), le = val("license_expires_on");
+      if (li && le && changed("license_issued_on", "license_expires_on") && dateKey(li) > dateKey(le)) {
+        out.push({ field: "license_expires_on", msg: "วันที่ออกใบอนุญาตต้องไม่หลังวันหมดอายุใบอนุญาต" });
+      }
+
+      var vf = val("valid_from"), vt = val("valid_to");
+      if (vf && vt && changed("valid_from", "valid_to") && dateKey(vf) > dateKey(vt)) {
+        out.push({ field: "valid_to", msg: "วันเริ่มสมาชิกภาพต้องไม่หลังวันหมดอายุ" });
+      }
+      return out;
+    }
+
     /* ================= toast ================= */
     function toastHost() {
       var h = $(".toast-host");
@@ -1041,6 +1146,10 @@
       validateThaiId: validateThaiId,
       formatThaiId: formatThaiId,
       maskThaiId: maskThaiId,
+      arabicDigits: arabicDigits,
+      memberFieldSnapshot: memberFieldSnapshot,
+      memberFieldErrors: memberFieldErrors,
+      MEMBER_CHECK_FIELDS: MEMBER_CHECK_FIELDS,
       fullName: fullName,
       orgLabel: orgLabel,
       APP_STATUS: APP_STATUS,

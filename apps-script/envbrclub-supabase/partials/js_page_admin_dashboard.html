@@ -6,6 +6,7 @@
     A.renderFooter();
 
     var perm = null;
+    var health = null;
 
     A.auth.requireAdmin("admin-index", "dashboard")
       .then(function (s) {
@@ -13,22 +14,30 @@
         return A.rpc("admin_menu").catch(function () { return null; })
           .then(function (p) {
             perm = p;
+            return A.rpc("admin_system_health").catch(function () { return null; });
+          })
+          .then(function (h) {
+            health = h;
             /*
-            * ปรับสถานะสมาชิกและบัตรที่เลยวันหมดอายุให้อัตโนมัติทุกครั้งที่เปิดหน้าภาพรวม
-            * แบบเดียวกับงานประจำวันของระบบ envbrclub (dailyMaintenance) ไม่ต้องรอให้ผู้ดูแลกดปุ่มเอง
+            * ทางสำรองของงานปรับสถานะหมดอายุประจำวัน (pg_cron 00:05 น.)
+            * เมื่องานประจำวันไม่ปกติ (ถูกปิด รอบล่าสุดล้มเหลว หรือไม่ได้รันเกิน 1 วัน)
+            * หรืออ่านสถานะงานไม่ได้ ให้ปรับสถานะที่เลยวันหมดอายุเมื่อเปิดหน้าภาพรวม
             * ถ้าสถานะค้างเป็น "สมาชิกปัจจุบัน" ตัวเลขสถิติ การกรองทะเบียน และไฟล์ Excel จะคลาดเคลื่อน
             * ทำเฉพาะบัญชีที่มีสิทธิ์งานทะเบียน (ฟังก์ชันฝั่งฐานข้อมูลตรวจสิทธิ์ซ้ำ)
             * และบันทึกประวัติเฉพาะเมื่อมีรายการถูกปรับจริง ทำก่อนอ่านสถิติ ตัวเลขที่แสดงจึงเป็นปัจจุบัน
             * ถ้าไม่สำเร็จให้หน้าภาพรวมแสดงตามปกติ ผู้ดูแลยังกดปุ่มเองได้
             */
-            if (!p || !p.members) return null;
+            if (!perm || !perm.members) return null;
+            // ข้ามเฉพาะเมื่องานประจำวันปกติและเคยรันแล้ว (หลังเพิ่งตั้งงานยังไม่มีรอบใดปรับสถานะให้)
+            var pr = h && h.protections;
+            if (pr && pr.daily_expire_job === true && pr.daily_expire_last_run) return null;
             return A.rpc("admin_expire_memberships").catch(function () { return null; });
           })
           .then(function (sweep) {
             return Promise.all([
               A.loadSettings(),
               A.rpc("admin_stats"),
-              A.rpc("admin_system_health").catch(function () { return null; }),
+              health,
               sweep
             ]);
           });
@@ -56,6 +65,29 @@
             '</div><div class="k">' + A.esc(k) + "</div></div>";
     }
 
+    /*
+    * สถานะงานปรับสถานะหมดอายุประจำวันของฐานข้อมูล (pg_cron)
+    * daily_expire_job เป็นจริงเมื่องานเปิดอยู่ และรอบล่าสุดไม่ล้มเหลวและรันภายใน 26 ชั่วโมง
+    * ถ้าไม่ปกติ สถานะยังถูกปรับเมื่อผู้ดูแลงานทะเบียนเปิดหน้านี้ (ด้านบน)
+    */
+    function dailyJobText(p) {
+      var last = p.daily_expire_last_run
+        ? " (รอบล่าสุด " + A.esc(A.fmt.thaiDateTime(p.daily_expire_last_run)) + ")" : "";
+      var ran = !!(p.daily_expire_last_run || p.daily_expire_last_status);
+      if (p.daily_expire_job) return "ทำงานปกติ" + last;
+      if (p.daily_expire_active === false && ran) {
+        return '<strong style="color:var(--c-err-700)">งานถูกปิดอยู่</strong>' + last;
+      }
+      if (p.daily_expire_last_status === "failed") {
+        return '<strong style="color:var(--c-err-700)">รอบล่าสุดล้มเหลว</strong>' + last +
+          " กรุณาแจ้งผู้ดูแลฐานข้อมูลตรวจ cron.job_run_details";
+      }
+      if (ran) {
+        return '<strong style="color:var(--c-err-700)">ไม่ได้รันเกิน 1 วัน หรือรอบล่าสุดค้างอยู่</strong>' + last;
+      }
+      return "ยังไม่ได้เปิด (สถานะจะถูกปรับเมื่อผู้ดูแลงานทะเบียนเปิดหน้านี้)";
+    }
+
     // สถานะการป้องกันข้อมูล: ถ้ากุญแจเข้ารหัสมีปัญหา ต้องเห็นเป็นอย่างแรก
     function renderHealth(h) {
       var host = A.$("#health");
@@ -66,10 +98,14 @@
       var enc = h.encryption;
       if (enc.ok) {
         var p = h.protections || {};
+        // งานประจำวันไม่ปกติ: เปิดกล่องไว้และเตือนที่หัวข้อ ไม่ให้ซ่อนอยู่ใต้ "ทำงานปกติ"
+        var jobBad = p.daily_expire_job === false;
         host.innerHTML =
-          '<details class="card card-tight mb-2">' +
-          '<summary class="small"><strong style="color:var(--c-ok-700)">' +
-          "การป้องกันข้อมูลทำงานปกติ</strong> " +
+          '<details class="card card-tight mb-2"' + (jobBad ? " open" : "") + ">" +
+          '<summary class="small">' +
+          (jobBad
+            ? '<strong style="color:var(--c-err-700)">งานปรับสถานะหมดอายุประจำวันไม่ปกติ</strong> '
+            : '<strong style="color:var(--c-ok-700)">การป้องกันข้อมูลทำงานปกติ</strong> ') +
           '<span class="muted">(กุญแจเข้ารหัสใช้งานได้ · ประวัติการแก้ไขลบไม่ได้ · ' +
           "ตรวจเมื่อ " + A.esc(A.fmt.thaiDateTime(h.checked_at)) + ")</span></summary>" +
           '<ul class="small mt-1 mb-0" style="padding-left:18px">' +
@@ -80,6 +116,7 @@
           "<li>สมาชิกที่มีใบสำคัญรับเงินหรือบัตรแล้ว: ลบไม่ได้</li>" +
           "<li>การลบสมาชิก: ต้องพิมพ์ยืนยันชื่อ และเป็นสิทธิ์ของผู้ดูแลระดับสูงสุดเท่านั้น</li>" +
           "<li>บันทึกความยินยอมตาม PDPA: คงอยู่แม้ลบสมาชิก</li>" +
+          "<li>ปรับสถานะสมาชิก/บัตรที่หมดอายุอัตโนมัติทุกวัน เวลา 00:05 น.: " + dailyJobText(p) + "</li>" +
           "</ul></details>";
       } else {
         // กุญแจมีปัญหา = เรื่องด่วนที่สุด ห้ามบันทึกข้อมูลใหม่ก่อนแก้

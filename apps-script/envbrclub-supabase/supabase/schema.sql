@@ -1,9 +1,9 @@
 -- =====================================================================
 -- club-data (Supabase project ooovzjovkrfyuqakkpig) : schema snapshot
--- สำรองเมื่อ 2026-10-01 จากฐานข้อมูลจริง (PostgreSQL 17)
+-- สำรองเมื่อ 2026-10-01 จากฐานข้อมูลจริง (PostgreSQL 17) ปรับปรุงล่าสุด 2026-10-09
 --
 -- ไฟล์นี้คือโครงสร้างฐานข้อมูล "ปัจจุบัน" ทั้งหมดของสคีมา public และ app_private
--- รวมฟังก์ชัน ทริกเกอร์ RLS policy สิทธิ์ (grant) และ storage bucket/policy
+-- รวมฟังก์ชัน ทริกเกอร์ RLS policy สิทธิ์ (grant) storage bucket/policy และงานตามเวลา (pg_cron)
 -- ไม่มีข้อมูลส่วนบุคคลของสมาชิก
 --
 -- ข้อมูลอ้างอิง (org_types, settings) อยู่ใน seed.sql
@@ -17,6 +17,7 @@ set client_min_messages = warning;
 -- Extensions
 -- ---------------------------------------------------------------------
 
+create extension if not exists pg_cron with schema pg_catalog;
 create extension if not exists pg_stat_statements with schema extensions;
 create extension if not exists pgcrypto with schema extensions;
 create extension if not exists supabase_vault with schema vault;
@@ -559,6 +560,43 @@ end;
 $function$
 ;
 
+CREATE OR REPLACE FUNCTION app_private.expire_memberships(p_scheduled boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'app_private', 'pg_temp'
+AS $function$
+declare
+  v_m int; v_c int;
+  v_today date := (now() at time zone 'Asia/Bangkok')::date;
+  v_prev_actor text := current_setting('app.audit_actor', true);
+begin
+  -- งานประจำวัน : ให้ประวัติที่เกิดในฟังก์ชันนี้ (รวมจากทริกเกอร์) บันทึกผู้ทำเป็น system
+  -- แล้วคืนค่าเดิมก่อนจบ คำสั่งอื่นใน transaction เดียวกันจะได้ไม่ถูกนับเป็นงานอัตโนมัติ
+  if p_scheduled then
+    perform set_config('app.audit_actor', 'system', true);
+  end if;
+
+  update public.cards c set status = 'expired'
+   where c.status = 'active' and c.valid_to < v_today;
+  get diagnostics v_c = row_count;
+  update public.members m set status = 'expired'
+   where m.status = 'active' and m.valid_to is not null and m.valid_to < v_today;
+  get diagnostics v_m = row_count;
+  if v_m > 0 or v_c > 0 then
+    perform app_private.log_audit('expire_sweep', 'members', null, null,
+      jsonb_build_object('members_expired', v_m, 'cards_expired', v_c),
+      case when p_scheduled then 'ระบบปรับสถานะสมาชิก/บัตรที่หมดอายุอัตโนมัติประจำวัน'
+           else 'ปรับสถานะสมาชิก/บัตรที่หมดอายุ' end);
+  end if;
+  if p_scheduled then
+    perform set_config('app.audit_actor', coalesce(v_prev_actor, ''), true);
+  end if;
+  return jsonb_build_object('ok', true, 'members_expired', v_m, 'cards_expired', v_c);
+end;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION app_private.gen_code(p_prefix text, p_width integer DEFAULT 4)
  RETURNS text
  LANGUAGE plpgsql
@@ -629,11 +667,133 @@ begin
 
   select a.role into v_role from public.admins a where a.user_id = v_uid and a.active;
 
+  -- ไม่มีผู้ใช้ที่เข้าสู่ระบบ : งานอัตโนมัติ (system) หรือการแก้ตรงที่ฐานข้อมูล (database)
+  if v_role is null and v_uid is null then
+    v_role := 'database';
+    if current_setting('app.audit_actor', true) = 'system' then
+      v_role := 'system';
+    else
+      begin
+        if current_setting('request.jwt.claims', true)::jsonb ->> 'role' = 'service_role' then
+          v_role := 'system';
+        end if;
+      exception when others then
+        null;
+      end;
+    end if;
+  end if;
+
   insert into public.audit_log
     (actor_id, actor_email, actor_role, action, entity, entity_id, entity_label, changed, note)
   values
-    (v_uid, v_email, coalesce(v_role, 'member'), p_action, p_entity,
-     p_entity_id, p_entity_label, p_changed, p_note);
+    (v_uid, v_email, coalesce(v_role, 'member'),
+     p_action, p_entity, p_entity_id, p_entity_label, p_changed, p_note);
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION app_private.members_validate()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'app_private', 'public', 'pg_temp'
+AS $function$
+declare
+  e        text[] := '{}';
+  o        public.members;   -- ค่าเดิม (ตอนเพิ่มแถวทุกช่องเป็นค่าว่าง ทุกช่องที่มีค่าจึงถูกตรวจ)
+  v_phone  text;
+  v_addr   text;
+begin
+  if tg_op = 'UPDATE' then
+    o := old;
+  end if;
+
+  -- ข้อความ: ตรวจความยาวเมื่อเพิ่มแถว หรือเมื่อค่าเปลี่ยน
+  if (new.title is distinct from o.title) and length(new.title) > 40 then
+    e := e || 'คำนำหน้ายาวเกิน 40 ตัวอักษร'::text; end if;
+  if (new.title_other is distinct from o.title_other) and length(new.title_other) > 40 then
+    e := e || 'คำนำหน้า (อื่นๆ) ยาวเกิน 40 ตัวอักษร'::text; end if;
+  if (new.first_name is distinct from o.first_name) then
+    if btrim(coalesce(new.first_name, '')) = '' then e := e || 'กรุณากรอกชื่อ'::text;
+    elsif length(new.first_name) > 80 then e := e || 'ชื่อยาวเกิน 80 ตัวอักษร'::text; end if;
+  end if;
+  if (new.last_name is distinct from o.last_name) then
+    if btrim(coalesce(new.last_name, '')) = '' then e := e || 'กรุณากรอกนามสกุล'::text;
+    elsif length(new.last_name) > 80 then e := e || 'นามสกุลยาวเกิน 80 ตัวอักษร'::text; end if;
+  end if;
+  if (new.first_name_en is distinct from o.first_name_en) and length(new.first_name_en) > 80 then
+    e := e || 'ชื่อภาษาอังกฤษยาวเกิน 80 ตัวอักษร'::text; end if;
+  if (new.last_name_en is distinct from o.last_name_en) and length(new.last_name_en) > 80 then
+    e := e || 'นามสกุลภาษาอังกฤษยาวเกิน 80 ตัวอักษร'::text; end if;
+  if (new.email is distinct from o.email) and new.email is not null then
+    if length(new.email) > 120 then e := e || 'อีเมลยาวเกิน 120 ตัวอักษร'::text;
+    elsif new.email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+      e := e || 'รูปแบบอีเมลไม่ถูกต้อง'::text; end if;
+  end if;
+  if (new.license_no is distinct from o.license_no) and length(new.license_no) > 60 then
+    e := e || 'เลขที่ใบอนุญาตยาวเกิน 60 ตัวอักษร'::text; end if;
+  if (new.license_type is distinct from o.license_type) and length(new.license_type) > 120 then
+    e := e || 'ประเภทใบอนุญาตยาวเกิน 120 ตัวอักษร'::text; end if;
+  if (new.education_level is distinct from o.education_level) and length(new.education_level) > 60 then
+    e := e || 'ระดับการศึกษายาวเกิน 60 ตัวอักษร'::text; end if;
+  if (new.education_major is distinct from o.education_major) and length(new.education_major) > 120 then
+    e := e || 'สาขาวิชายาวเกิน 120 ตัวอักษร'::text; end if;
+  if (new.org_type_other is distinct from o.org_type_other) and length(new.org_type_other) > 150 then
+    e := e || 'ประเภทหน่วยงาน (อื่นๆ) ยาวเกิน 150 ตัวอักษร'::text; end if;
+  if (new.org_name is distinct from o.org_name) and length(new.org_name) > 180 then
+    e := e || 'ชื่อหน่วยงานยาวเกิน 180 ตัวอักษร'::text; end if;
+  if (new.position_name is distinct from o.position_name) and length(new.position_name) > 150 then
+    e := e || 'ตำแหน่งยาวเกิน 150 ตัวอักษร'::text; end if;
+  if (new.work_phone is distinct from o.work_phone) and length(new.work_phone) > 30 then
+    e := e || 'โทรศัพท์หน่วยงานยาวเกิน 30 ตัวอักษร'::text; end if;
+  if (new.work_tambon is distinct from o.work_tambon or new.work_amphoe is distinct from o.work_amphoe
+      or new.work_province is distinct from o.work_province or new.addr_tambon is distinct from o.addr_tambon
+      or new.addr_amphoe is distinct from o.addr_amphoe or new.addr_province is distinct from o.addr_province)
+     and greatest(length(new.work_tambon), length(new.work_amphoe), length(new.work_province),
+                  length(new.addr_tambon), length(new.addr_amphoe), length(new.addr_province)) > 100 then
+    e := e || 'ชื่อตำบล อำเภอ หรือจังหวัดยาวเกิน 100 ตัวอักษร'::text; end if;
+  if (new.work_zip is distinct from o.work_zip) and new.work_zip is not null and new.work_zip !~ '^[0-9]{5}$' then
+    e := e || 'รหัสไปรษณีย์ของที่ทำงานต้องเป็นตัวเลข 5 หลัก'::text; end if;
+  if (new.addr_zip is distinct from o.addr_zip) and new.addr_zip is not null and new.addr_zip !~ '^[0-9]{5}$' then
+    e := e || 'รหัสไปรษณีย์ของที่อยู่ต้องเป็นตัวเลข 5 หลัก'::text; end if;
+
+  -- วันที่
+  if (new.birth_date is distinct from o.birth_date) and new.birth_date is not null
+     and (new.birth_date < date '1900-01-01' or new.birth_date > (now() at time zone 'Asia/Bangkok')::date) then
+    e := e || 'วันเกิดไม่ถูกต้อง (กรุณากรอกปีเป็น ค.ศ. ในปฏิทิน ระบบแสดงเป็น พ.ศ. ให้เอง)'::text; end if;
+  if (new.license_issued_on is distinct from o.license_issued_on or new.license_expires_on is distinct from o.license_expires_on)
+     and new.license_issued_on is not null and new.license_expires_on is not null
+     and new.license_issued_on > new.license_expires_on then
+    e := e || 'วันที่ออกใบอนุญาตต้องไม่หลังวันหมดอายุใบอนุญาต'::text; end if;
+  if (new.valid_from is distinct from o.valid_from or new.valid_to is distinct from o.valid_to)
+     and new.valid_from is not null and new.valid_to is not null and new.valid_from > new.valid_to then
+    e := e || 'วันเริ่มสมาชิกภาพต้องไม่หลังวันหมดอายุ'::text; end if;
+
+  -- ช่องที่เข้ารหัส : ถอดรหัสแล้วตรวจเฉพาะเมื่อข้อความต่างจากเดิม
+  -- (ตอนเพิ่มแถว o เป็นค่าว่าง decrypt_pii(null) ได้ null ทุกค่าที่มีจึงถูกตรวจ)
+  if (new.phone_enc is distinct from o.phone_enc) and new.phone_enc is not null then
+    v_phone := app_private.decrypt_pii(new.phone_enc);
+    if v_phone is distinct from app_private.decrypt_pii(o.phone_enc)
+       and v_phone is not null and (length(v_phone) > 20 or v_phone !~ '^[0-9+() .-]+$'
+        or length(regexp_replace(v_phone, '[^0-9]', '', 'g')) not between 9 and 15) then
+      e := e || 'เบอร์โทรศัพท์มือถือไม่ถูกต้อง (ตัวเลข 9-15 หลัก ใช้ได้เฉพาะตัวเลข เว้นวรรค - + และวงเล็บ)'::text;
+    end if;
+  end if;
+  if (new.addr_detail_enc is distinct from o.addr_detail_enc) and new.addr_detail_enc is not null then
+    v_addr := app_private.decrypt_pii(new.addr_detail_enc);
+    if v_addr is distinct from app_private.decrypt_pii(o.addr_detail_enc) and length(v_addr) > 200 then
+      e := e || 'ที่อยู่ (บ้านเลขที่/หมู่/ถนน) ยาวเกิน 200 ตัวอักษร'::text; end if;
+  end if;
+  if (new.work_addr_detail_enc is distinct from o.work_addr_detail_enc) and new.work_addr_detail_enc is not null then
+    v_addr := app_private.decrypt_pii(new.work_addr_detail_enc);
+    if v_addr is distinct from app_private.decrypt_pii(o.work_addr_detail_enc) and length(v_addr) > 200 then
+      e := e || 'ที่อยู่ที่ทำงานยาวเกิน 200 ตัวอักษร'::text; end if;
+  end if;
+
+  if array_length(e, 1) > 0 then
+    raise exception 'ข้อมูลไม่ถูกต้อง: %', array_to_string(e, ' · ') using errcode = '22023';
+  end if;
+  return new;
 end;
 $function$
 ;
@@ -1024,6 +1184,8 @@ AS $function$
 declare
   v_app public.applications; v_m public.members; v_card public.cards;
   v_from date; v_to date; v_code text; v_years int;
+  -- วันที่ตามเวลาประเทศไทย (ฐานข้อมูลเป็น UTC current_date ช้ากว่าวันในไทยช่วง 00:00-06:59 น.)
+  v_today date := (now() at time zone 'Asia/Bangkok')::date;
 begin
   perform app_private.require_area('applications');
 
@@ -1051,13 +1213,20 @@ begin
       using errcode = '55000';
   end if;
 
+  -- ใบสมัครต่ออายุที่ยื่นไว้ก่อนสมาชิกถูกยกเลิกสมาชิกภาพ ห้ามนับต่อจากงวดเดิม
+  -- (มิฉะนั้นบัตรใบใหม่จะต่อเนื่องจากช่วงที่ถูกยกเลิกไปแล้ว) รับกลับได้ทางใบสมัครใหม่เท่านั้น
+  if v_app.app_type = 'renew' and v_m.status = 'revoked' then
+    raise exception 'สมาชิกรายนี้ถูกยกเลิกสมาชิกภาพแล้ว จึงอนุมัติใบสมัครต่ออายุนี้ไม่ได้ กรุณาบันทึกไม่อนุมัติพร้อมเหตุผล หากจะรับกลับเป็นสมาชิก ให้ยื่นใบสมัครใหม่'
+      using errcode = '55000';
+  end if;
+
   v_years := greatest(coalesce(v_app.term_years, 1), 1);
 
   -- ต่ออายุก่อนหมดอายุ: นับต่อจากวันหมดอายุเดิม
-  if v_app.app_type = 'renew' and v_m.valid_to is not null and v_m.valid_to >= current_date then
+  if v_app.app_type = 'renew' and v_m.valid_to is not null and v_m.valid_to >= v_today then
     v_from := v_m.valid_to + 1;
   else
-    v_from := current_date;
+    v_from := v_today;
   end if;
   v_to := (v_from + (v_years || ' years')::interval)::date - 1;
 
@@ -1172,21 +1341,9 @@ CREATE OR REPLACE FUNCTION public.admin_expire_memberships()
  SECURITY DEFINER
  SET search_path TO 'public', 'app_private', 'pg_temp'
 AS $function$
-declare v_m int; v_c int;
 begin
   perform app_private.require_area('members');
-  update public.cards c set status = 'expired'
-   where c.status = 'active' and c.valid_to < current_date;
-  get diagnostics v_c = row_count;
-  update public.members m set status = 'expired'
-   where m.status = 'active' and m.valid_to is not null and m.valid_to < current_date;
-  get diagnostics v_m = row_count;
-  if v_m > 0 or v_c > 0 then
-    perform app_private.log_audit('expire_sweep', 'members', null, null,
-      jsonb_build_object('members_expired', v_m, 'cards_expired', v_c),
-      'ปรับสถานะสมาชิก/บัตรที่หมดอายุ');
-  end if;
-  return jsonb_build_object('ok', true, 'members_expired', v_m, 'cards_expired', v_c);
+  return app_private.expire_memberships(false);
 end; $function$
 ;
 
@@ -1199,6 +1356,15 @@ AS $function$
 declare v_rows jsonb; v_n int;
 begin
   perform app_private.require_area('members');
+
+  -- ค่าว่าง = แบบปิดบัง (เหมือนเดิม) ทำให้ชัดก่อนใช้ ประวัติจะได้บันทึก true/false เสมอ
+  p_include_pii := coalesce(p_include_pii, false);
+
+  -- ข้อมูลส่วนบุคคลแบบเต็มเป็นสิทธิ์ของผู้ดูแลระดับสูงสุดเท่านั้น
+  if p_include_pii and not public.admin_can('export_pii') then
+    raise exception 'การส่งออกแบบรวมข้อมูลส่วนบุคคล (เลขประจำตัวประชาชน เบอร์โทรศัพท์ ที่อยู่) ทำได้เฉพาะผู้ดูแลระดับสูงสุด กรุณาเลือกส่งออกแบบปิดบังข้อมูลอ่อนไหว'
+      using errcode = '42501';
+  end if;
 
   select coalesce(jsonb_agg(row_to_json(t)::jsonb order by t.created_at), '[]'::jsonb), count(*)
     into v_rows, v_n
@@ -1298,7 +1464,8 @@ AS $function$
     'admin_accounts', public.admin_can('admin_accounts'),
     'slip_override',  public.admin_can('slip_override'),
     'slip_auto_approve',  public.admin_can('slip_auto_approve'),
-    'bank_verify_switch', public.admin_can('bank_verify_switch')
+    'bank_verify_switch', public.admin_can('bank_verify_switch'),
+    'export_pii',     public.admin_can('export_pii')
   );
 $function$
 ;
@@ -1926,7 +2093,7 @@ begin
     'members_expired', (select count(*) from public.members where status = 'expired'),
     'expiring_60d',    (select count(*) from public.members
                          where status = 'active' and valid_to is not null
-                           and valid_to between current_date and current_date + 60),
+                           and valid_to between (now() at time zone 'Asia/Bangkok')::date and (now() at time zone 'Asia/Bangkok')::date + 60),
     'apps_awaiting_payment', (select count(*) from public.applications where status = 'awaiting_payment'),
     'apps_payment_submitted',(select count(*) from public.applications where status = 'payment_submitted'),
     'apps_payment_verified', (select count(*) from public.applications where status = 'payment_verified'),
@@ -1951,10 +2118,29 @@ CREATE OR REPLACE FUNCTION public.admin_system_health()
  SECURITY DEFINER
  SET search_path TO 'public', 'app_private', 'pg_temp'
 AS $function$
-declare v_enc jsonb;
+declare
+  v_enc jsonb;
+  v_active boolean := false; v_last_status text; v_last_at timestamptz; v_last_runid bigint;
 begin
   perform app_private.require_area('dashboard');
   v_enc := app_private.check_encryption();
+  -- อ่านตารางของ pg_cron แบบไม่ผูกตอนสร้างฟังก์ชัน ถ้าส่วนขยายหายไปจะรายงานว่าไม่ทำงานแทนการล้ม
+  if to_regclass('cron.job') is not null then
+    begin
+      -- รอบล่าสุดเรียงตาม runid (start_time ว่างได้ถ้าฐานข้อมูลรีสตาร์ตระหว่างเริ่มรอบ)
+      execute $q$
+        select j.active, d.status, coalesce(d.start_time, d.end_time), d.runid
+          from cron.job j
+          left join lateral (
+            select r.runid, r.status, r.start_time, r.end_time from cron.job_run_details r
+             where r.jobid = j.jobid order by r.runid desc limit 1
+          ) d on true
+         where j.jobname = $1$q$
+        into v_active, v_last_status, v_last_at, v_last_runid using 'club-expire-memberships';
+    exception when others then
+      v_active := false;
+    end;
+  end if;
   return jsonb_build_object(
     'encryption', v_enc,
     'counts', jsonb_build_object(
@@ -1974,7 +2160,13 @@ begin
         select 1 from pg_trigger where tgname = 'trg_audit_log_append_only' and not tgisinternal),
       'receipts_block_member_delete', true,
       'delete_requires_name_confirmation', true,
-      'consents_survive_member_delete', true
+      'consents_survive_member_delete', true,
+      'daily_expire_job', coalesce(v_active, false)
+        and coalesce(v_last_status, '') <> 'failed'
+        and (v_last_runid is null or coalesce(v_last_at > now() - interval '26 hours', false)),
+      'daily_expire_active', coalesce(v_active, false),
+      'daily_expire_last_status', v_last_status,
+      'daily_expire_last_run', v_last_at
     ),
     'checked_at', now()
   );
@@ -2311,7 +2503,7 @@ begin
       'issued_at', v_card.issued_at, 'valid_from', v_card.valid_from,
       'valid_to', v_card.valid_to, 'status', v_card.status,
       'print_count', v_card.print_count,
-      'is_expired', (v_card.valid_to < current_date)
+      'is_expired', (v_card.valid_to < (now() at time zone 'Asia/Bangkok')::date)
     ) end
   );
 end;
@@ -2919,7 +3111,10 @@ CREATE OR REPLACE FUNCTION public.verify_card(p_token text)
  SECURITY DEFINER
  SET search_path TO 'public', 'app_private', 'pg_temp'
 AS $function$
-declare v_c public.cards; v_m public.members; v_org text;
+declare
+  v_c public.cards; v_m public.members; v_org text;
+  v_today date := (now() at time zone 'Asia/Bangkok')::date;
+  v_bridge boolean := false;
 begin
   if p_token is null or btrim(p_token) = '' then
     return jsonb_build_object('found', false, 'reason', 'ไม่พบรหัสตรวจสอบ');
@@ -2933,6 +3128,36 @@ begin
     when v_m.org_type_code = 'other' then coalesce(v_m.org_name, v_m.org_type_other)
     else coalesce(v_m.org_name, (select o.name from public.org_types o where o.code = v_m.org_type_code))
   end;
+
+  -- บัตรจากการต่ออายุล่วงหน้า : ไล่ย้อนบัตรใบก่อนที่ถูกแทนที่และต่อเนื่องกัน จนถึงใบที่ครอบคลุมวันนี้
+  -- ทุกขั้นวันเริ่มต้องน้อยลง จึงไม่วนซ้ำ และจำกัดไว้ 10 ขั้น
+  if v_c.status = 'active' and v_m.status = 'active' and v_today < v_c.valid_from then
+    with recursive chain (valid_from, issued_at, depth) as (
+      select v_c.valid_from, v_c.issued_at, 0
+      union all
+      select c2.valid_from, c2.issued_at, ch.depth + 1
+        from chain ch
+        join public.cards c2
+          on c2.member_id = v_c.member_id
+         and c2.status = 'replaced'
+         and c2.valid_from < ch.valid_from
+         and c2.valid_to >= ch.valid_from - 1
+       where ch.valid_from > v_today
+         and ch.depth < 10
+    )
+    select exists (
+      select 1 from chain ch
+       where ch.depth > 0
+         and ch.valid_from <= v_today
+         -- มีการยกเลิกบัตรหลังจากออกบัตรใบที่ครอบคลุมวันนี้ = สมาชิกภาพช่วงนี้ถูกยกเลิกแล้ว
+         and not exists (
+           select 1 from public.cards c3
+            where c3.member_id = v_c.member_id
+              and c3.status = 'revoked'
+              and c3.issued_at > ch.issued_at)
+    ) into v_bridge;
+  end if;
+
   return jsonb_build_object(
     'found', true,
     'member_code', v_m.member_code,
@@ -2947,8 +3172,11 @@ begin
     'card_status', v_c.status,
     'member_status', v_m.status,
     'is_valid', (v_c.status = 'active'
-                 and current_date between v_c.valid_from and v_c.valid_to
-                 and v_m.status = 'active'),
+                 and v_m.status = 'active'
+                 and v_today <= v_c.valid_to
+                 and (v_today >= v_c.valid_from or v_bridge)),
+    'renewed_early', v_bridge,
+    'not_yet_valid', (v_today < v_c.valid_from),
     'checked_at', now());
 end; $function$
 ;
@@ -3096,6 +3324,7 @@ CREATE TRIGGER trg_audit_cards AFTER INSERT OR DELETE OR UPDATE ON public.cards 
 CREATE TRIGGER trg_cards_touch BEFORE UPDATE ON public.cards FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 CREATE TRIGGER trg_audit_members AFTER INSERT OR DELETE OR UPDATE ON public.members FOR EACH ROW EXECUTE FUNCTION public.audit_row_change();
 CREATE TRIGGER trg_members_touch BEFORE UPDATE ON public.members FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER trg_members_validate BEFORE INSERT OR UPDATE ON public.members FOR EACH ROW EXECUTE FUNCTION app_private.members_validate();
 CREATE TRIGGER trg_audit_org_types AFTER INSERT OR DELETE OR UPDATE ON public.org_types FOR EACH ROW EXECUTE FUNCTION public.audit_keyed_change();
 CREATE TRIGGER trg_audit_payments AFTER INSERT OR DELETE OR UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION public.audit_row_change();
 CREATE TRIGGER trg_payments_touch BEFORE UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
@@ -3315,11 +3544,15 @@ revoke all on function app_private.decrypt_pii(p_cipher bytea) from public, anon
 
 revoke all on function app_private.encrypt_pii(p_plain text) from public, anon, authenticated, service_role;
 
+revoke all on function app_private.expire_memberships(p_scheduled boolean) from public, anon, authenticated, service_role;
+
 revoke all on function app_private.gen_code(p_prefix text, p_width integer) from public, anon, authenticated, service_role;
 
 revoke all on function app_private.is_valid_thai_id(p_id text) from public, anon, authenticated, service_role;
 
 revoke all on function app_private.log_audit(p_action text, p_entity text, p_entity_id text, p_entity_label text, p_changed jsonb, p_note text) from public, anon, authenticated, service_role;
+
+revoke all on function app_private.members_validate() from public, anon, authenticated, service_role;
 
 revoke all on function app_private.next_number(p_name text) from public, anon, authenticated, service_role;
 
@@ -3483,12 +3716,22 @@ grant execute on function public.verify_card(p_token text) to service_role;
 -- ---------------------------------------------------------------------
 
 comment on table public.announcements is 'ประกาศประชาสัมพันธ์และกิจกรรมของชมรม จัดการโดย superadmin และ admin เท่านั้น';
-comment on column public.admins.role is 'superadmin=ผู้ดูแลระดับสูงสุด (จัดการผู้ดูแลและดูได้ทั้งหมด), admin=ผู้ดูแลระบบ (ทุกเมนู ยกเว้นบัญชีผู้ดูแลและการลบสมาชิก), registrar=เจ้าหน้าที่ทะเบียน (ตรวจใบสมัคร/ทะเบียนสมาชิก/ประวัติ), treasurer=เจ้าหน้าที่การเงิน (ตรวจสลิป/ทะเบียนสมาชิก/ประวัติ), registrar_treasurer=เจ้าหน้าที่ทะเบียนและการเงิน (ตรวจใบสมัคร+ตรวจสลิป/ทะเบียนสมาชิก/ประวัติ)';
+comment on column public.admins.role is 'superadmin=ผู้ดูแลระดับสูงสุด (จัดการผู้ดูแลและดูได้ทั้งหมด), admin=ผู้ดูแลระบบ (ทุกเมนู ยกเว้นบัญชีผู้ดูแล การลบสมาชิก การแนบสลิปแทนสมาชิก สวิตช์ยืนยันสลิปกับธนาคาร และการส่งออกแบบรวมข้อมูลส่วนบุคคล), registrar=เจ้าหน้าที่ทะเบียน (ตรวจใบสมัคร/ทะเบียนสมาชิก/ประวัติ), treasurer=เจ้าหน้าที่การเงิน (ตรวจสลิป/ทะเบียนสมาชิก/ประวัติ), registrar_treasurer=เจ้าหน้าที่ทะเบียนและการเงิน (ตรวจใบสมัคร+ตรวจสลิป/ทะเบียนสมาชิก/ประวัติ)';
 comment on column public.announcements.status is 'draft=ฉบับร่าง (เห็นเฉพาะผู้ดูแล), published=เผยแพร่แล้ว (ทุกคนเห็น), archived=เก็บเข้าคลัง (เห็นเฉพาะผู้ดูแล)';
 comment on column public.members.work_addr_detail_enc is 'บ้านเลขที่ / หมู่ / ถนน ของที่ตั้งหน่วยงาน เข้ารหัสด้วย app_private.encrypt_pii()';
 comment on column public.receipts.voided_at is 'เวลาที่ใบสำคัญรับเงินฉบับนี้ถูกยกเลิกเพราะมีการแนบสลิปใหม่แทน ห้ามลบแถวทิ้ง เอกสารที่เคยส่งมอบไปแล้วต้องตรวจสอบย้อนหลังได้';
-comment on function public.admin_can(p_area text) is 'บัญชีผู้ดูแลที่ล็อกอินอยู่ เข้าพื้นที่งานที่ระบุได้หรือไม่ พื้นที่: dashboard, applications, payments, members, audit, settings, admin_accounts';
+comment on function public.admin_can(p_area text) is 'บัญชีผู้ดูแลที่ล็อกอินอยู่ เข้าพื้นที่งานที่ระบุได้หรือไม่ พื้นที่: dashboard, applications, payments, members, audit, announcements, signatories, signatory_president, signatory_receipt, settings, slip_auto_approve และพื้นที่เฉพาะผู้ดูแลระดับสูงสุด: admin_accounts, slip_override, bank_verify_switch, export_pii';
 comment on schema app_private is 'สคีมาภายใน: กุญแจเข้ารหัส ตัวนับเลขเอกสาร และฟังก์ชันที่ห้ามเรียกจาก API';
+
+-- ---------------------------------------------------------------------
+-- Scheduled jobs (pg_cron)
+-- ---------------------------------------------------------------------
+
+-- ปรับสถานะสมาชิก/บัตรที่หมดอายุทุกวัน 17:05 UTC = 00:05 น. เวลาประเทศไทย
+-- ชื่อเดิมจะถูกแทนที่ จึงรันซ้ำได้ (งานรันในฐานข้อมูล postgres ด้วยสิทธิ์ของผู้ที่สั่ง schedule)
+-- ต้องรันด้วยผู้ใช้ postgres (ไม่ใช่ superuser) สิทธิ์ของ cron มาจากการสร้างส่วนขยายบน Supabase
+select cron.schedule('club-expire-memberships', '5 17 * * *',
+  $cron$select app_private.expire_memberships(true)$cron$);
 
 -- ---------------------------------------------------------------------
 -- Storage buckets

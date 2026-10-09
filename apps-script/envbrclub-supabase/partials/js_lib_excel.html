@@ -250,7 +250,7 @@
       var body = (rows || []).map(function (r) {
         var cells = [
           A ? A.fmt.thaiDateTime(r.at) : String(r.at || ""),
-          r.actor_email || "(ระบบ)",
+          V && V.actorLabel ? V.actorLabel(r) : (r.actor_email || "(ระบบ)"),
           (V && V.ROLE[r.actor_role]) || r.actor_role || "",
           (V && V.ACTION[r.action]) || r.action || "",
           (V && V.ENTITY[r.entity]) || r.entity || "",

@@ -15,7 +15,8 @@
       signFile: null,
       photoPath: null,
       signPath: null,
-      locked: false
+      locked: false,
+      orig: null
     };
 
     var workAddr, homeAddr;
@@ -45,6 +46,8 @@
         state.locked = s === "payment_submitted" || s === "payment_verified";
 
         if (state.member) fillForm(state.member);
+        // ค่าตอนเปิดฟอร์ม: ตรวจรูปแบบเฉพาะช่องที่ผู้ใช้แก้ (เหมือนการตรวจในฐานข้อมูล)
+        state.orig = A.memberFieldSnapshot();
 
         A.$("#loading").hidden = true;
         A.$("#form").hidden = false;
@@ -555,7 +558,10 @@
         errs.push("เลขประจำตัวประชาชนไม่ถูกต้อง");
         A.$("#national_id").setAttribute("aria-invalid", "true");
       }
-      var phone = req("phone", "โทรศัพท์มือถือ");
+      // เลขไทยที่พิมพ์จากแป้นภาษาไทยแปลงเป็นเลขอารบิกก่อนตรวจและบันทึก
+      // ถ้าไม่ได้แก้ ส่งค่าเดิมกลับไปตามเดิม
+      var phone = A.arabicDigits(req("phone", "โทรศัพท์มือถือ"));
+      if (state.orig && phone === state.orig.phone) phone = state.orig.phone_raw;
       /*
       * หัวข้อ 4 (ข้อมูลการปฏิบัติงาน) และหัวข้อ 5 (ที่อยู่ที่ติดต่อได้)
       * ไม่ใช่ข้อบังคับของการสมัคร จึงอ่านค่าเฉย ๆ ไม่ผลักเข้า errs
@@ -595,43 +601,54 @@
       var w = workAddr.get();
       var h = homeAddr.get();
 
-      return {
-        errs: errs,
-        payload: {
-          title: title,
-          title_other: titleOther,
-          first_name: firstName,
-          last_name: lastName,
-          first_name_en: A.$("#first_name_en").value.trim(),
-          last_name_en: A.$("#last_name_en").value.trim(),
-          national_id: nid,
-          birth_date: A.$("#birth_date").value || "",
-          gender: (A.$$('input[name="gender"]:checked')[0] || {}).value || "",
-          phone: phone,
-          email: A.$("#email").value.trim(),
-          license_type: A.$("#license_type").value.trim(),
-          license_no: A.$("#license_no").value.trim(),
-          license_issued_on: A.$("#license_issued_on").value || "",
-          license_expires_on: A.$("#license_expires_on").value || "",
-          education_level: A.$("#education_level").value,
-          education_major: A.$("#education_major").value.trim(),
-          org_type_code: orgType,
-          org_type_other: orgOther,
-          org_name: orgName,
-          position_name: position,
-          work_addr_detail: workAddrDetail,
-          work_tambon: w.tambon,
-          work_amphoe: w.amphoe,
-          work_province: "บุรีรัมย์",
-          work_zip: w.zip,
-          work_phone: A.$("#work_phone").value.trim(),
-          addr_detail: addrDetail,
-          addr_tambon: h.tambon,
-          addr_amphoe: h.amphoe,
-          addr_province: "บุรีรัมย์",
-          addr_zip: h.zip
-        }
+      var payload = {
+        title: title,
+        title_other: titleOther,
+        first_name: firstName,
+        last_name: lastName,
+        first_name_en: A.$("#first_name_en").value.trim(),
+        last_name_en: A.$("#last_name_en").value.trim(),
+        national_id: nid,
+        birth_date: A.$("#birth_date").value || "",
+        gender: (A.$$('input[name="gender"]:checked')[0] || {}).value || "",
+        phone: phone,
+        email: A.$("#email").value.trim(),
+        license_type: A.$("#license_type").value.trim(),
+        license_no: A.$("#license_no").value.trim(),
+        license_issued_on: A.$("#license_issued_on").value || "",
+        license_expires_on: A.$("#license_expires_on").value || "",
+        education_level: A.$("#education_level").value,
+        education_major: A.$("#education_major").value.trim(),
+        org_type_code: orgType,
+        org_type_other: orgOther,
+        org_name: orgName,
+        position_name: position,
+        work_addr_detail: workAddrDetail,
+        work_tambon: w.tambon,
+        work_amphoe: w.amphoe,
+        work_province: "บุรีรัมย์",
+        work_zip: w.zip,
+        work_phone: A.$("#work_phone").value.trim(),
+        addr_detail: addrDetail,
+        addr_tambon: h.tambon,
+        addr_amphoe: h.amphoe,
+        addr_province: "บุรีรัมย์",
+        addr_zip: h.zip
       };
+
+      // รูปแบบข้อมูลตามเกณฑ์ของฐานข้อมูล ตรวจก่อนอัปโหลดไฟล์ (ดู A.memberFieldErrors)
+      // ช่องที่ไม่ผ่าน req() ต้องล้างกรอบแดงจากรอบก่อนเอง (phone ถูกตั้งใหม่ใน req() แล้ว)
+      A.MEMBER_CHECK_FIELDS.forEach(function (id) {
+        var e = A.$("#" + id);
+        if (e && id !== "phone") e.setAttribute("aria-invalid", "false");
+      });
+      A.memberFieldErrors(payload, state.orig).forEach(function (x) {
+        errs.push(x.msg);
+        var e = A.$("#" + x.field);
+        if (e) e.setAttribute("aria-invalid", "true");
+      });
+
+      return { errs: errs, payload: payload };
     }
 
     /* ---------- บันทึก ---------- */
@@ -676,6 +693,7 @@
         .then(function (memberId) {
           state.photoFile = null;
           state.signFile = null;
+          state.orig = A.memberFieldSnapshot();
           return recordConsent(memberId).then(function () { return memberId; });
         })
         .then(function () {

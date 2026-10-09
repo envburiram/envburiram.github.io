@@ -18,11 +18,26 @@
       .then(function (s) {
         if (!s) return null;
         me = (s.user && s.user.email) || "";
-        return Promise.all([A.loadSettings(), A.loadOrgTypes()]);
+        return Promise.all([
+          A.loadSettings(),
+          A.loadOrgTypes(),
+          A.rpc("admin_menu").catch(function () { return null; })
+        ]);
       })
       .then(function (r) {
         if (!r) return null;
         orgTypes = r[1];
+
+        /*
+        * ไฟล์ที่รวมเลขประจำตัวประชาชน เบอร์โทรศัพท์ และที่อยู่ ส่งออกได้เฉพาะผู้ดูแลระดับสูงสุด
+        * ฐานข้อมูลเป็นผู้กันจริง (admin_export_members) หน้านี้แค่ซ่อนปุ่มที่กดไม่ได้
+        * ถ้าอ่านสิทธิ์ไม่สำเร็จให้ซ่อนไว้ก่อน ปุ่มแบบปิดบังยังใช้ได้ตามปกติ
+        */
+        var mn = r[2];
+        // ฐานข้อมูลรุ่นก่อนมีสิทธิ์ export_pii ไม่ส่งคีย์นี้ ให้ดูจากบทบาทแทน
+        var canPii = !!(mn && (typeof mn.export_pii === "boolean" ? mn.export_pii : mn.role === "superadmin"));
+        A.$("#btn-xlsx").hidden = !canPii;
+        A.$("#pii-only-super").hidden = canPii;
 
         var selOrg = A.$("#f-org");
         orgTypes.forEach(function (o) {

@@ -57,7 +57,11 @@
       registrar: "เจ้าหน้าที่ทะเบียน",
       treasurer: "เจ้าหน้าที่การเงิน",
       registrar_treasurer: "เจ้าหน้าที่ทะเบียนและการเงิน",
-      member: "สมาชิก/ผู้สมัคร"
+      member: "สมาชิก/ผู้สมัคร",
+      // งานอัตโนมัติ: งานปรับสถานะหมดอายุประจำวันของฐานข้อมูล (pg_cron) และการตรวจสลิปกับธนาคาร
+      system: "ระบบอัตโนมัติ",
+      // ไม่มีผู้ใช้เข้าสู่ระบบและไม่ใช่งานอัตโนมัติ = มีคนแก้ตรงที่ฐานข้อมูล ผู้ตรวจควรสอบถามที่มา
+      database: "แก้ตรงที่ฐานข้อมูล (นอกระบบ)"
     };
 
     /* ชื่อฟิลด์ภาษาไทย */
@@ -144,6 +148,10 @@
       member_id: "สมาชิก",
       application_id: "ใบสมัคร",
       payment_id: "การชำระเงิน",
+      members_expired: "สมาชิกที่ปรับเป็นหมดอายุ (ราย)",
+      cards_expired: "บัตรที่ปรับเป็นหมดอายุ (ใบ)",
+      include_pii: "รวมข้อมูลส่วนบุคคล",
+      rows: "จำนวนรายการ",
       id: "รหัสรายการ"
     };
 
@@ -178,12 +186,20 @@
       return s;
     }
 
+    /** ชื่อผู้ทำ: อีเมล หรือคำอธิบายเมื่อไม่มีผู้ใช้เข้าสู่ระบบ (ใช้ร่วมกับไฟล์ Excel) */
+    function actorLabel(r) {
+      if (r.actor_email) return r.actor_email;
+      if (r.actor_role === "system") return "ระบบอัตโนมัติ";
+      if (r.actor_role === "database") return "(ไม่ทราบผู้ใช้)";
+      return "(ระบบ)";
+    }
+
     /** แปลงหนึ่งรายการ log เป็น HTML */
     function itemHtml(r) {
       var A = global.App;
       var esc = A.esc;
-      var actor = r.actor_email || "(ระบบ)";
-      var role = ROLE[r.actor_role] || r.actor_role || "";
+      var actor = actorLabel(r);
+      var role = (!r.actor_email && r.actor_role === "system") ? "" : (ROLE[r.actor_role] || r.actor_role || "");
       var entity = ENTITY[r.entity] || r.entity || "";
       var action = ACTION[r.action] || r.action;
 
@@ -245,6 +261,7 @@
       ACTION: ACTION,
       ENTITY: ENTITY,
       ROLE: ROLE,
+      actorLabel: actorLabel,
       FIELD: FIELD,
       fieldLabel: fieldLabel,
       fmtValue: fmtValue,

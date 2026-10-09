@@ -150,6 +150,22 @@
       var ab = A.$('[data-act="approve"]', box);
       if (ab) {
         ab.addEventListener("click", function () {
+          /*
+          * ใบต่ออายุที่ยื่นไว้ก่อนสมาชิกถูกยกเลิกสมาชิกภาพ ฐานข้อมูลไม่ให้อนุมัติ
+          * (admin_decide_application) แจ้งทางที่ทำได้แทนการให้กดแล้วเจอข้อผิดพลาด
+          */
+          if (row.app_type === "renew" && row.members && row.members.status === "revoked") {
+            A.modal({
+              title: "อนุมัติใบต่ออายุนี้ไม่ได้",
+              bodyHtml:
+                '<div class="alert alert-err mb-0"><div>' +
+                "<strong>สมาชิกรายนี้ถูกยกเลิกสมาชิกภาพแล้ว</strong>" +
+                "ใบต่ออายุที่ยื่นไว้ก่อนถูกยกเลิกอนุมัติไม่ได้ กรุณากด \"ไม่อนุมัติ\" พร้อมระบุเหตุผล " +
+                "หากชมรมจะรับกลับเป็นสมาชิก ให้ยื่นใบสมัครใหม่</div></div>",
+              okText: "รับทราบ"
+            });
+            return;
+          }
           A.modal({
             title: "อนุมัติใบสมัครและออกบัตรสมาชิก",
             bodyHtml:

@@ -9,6 +9,7 @@
     var memberId = A.param("id");
     var member = null;
     var pii = null;
+    var orig = null;   // ค่าตอนเปิดฟอร์ม ใช้ตรวจรูปแบบเฉพาะช่องที่แก้ (A.memberFieldErrors)
     var orgTypes = [];
     var workAddr, homeAddr;
 
@@ -154,6 +155,7 @@
       set("addr_detail", pii.addr_detail || "");
       homeAddr.set({ amphoe: m.addr_amphoe, tambon: m.addr_tambon, zip: m.addr_zip });
 
+      orig = A.memberFieldSnapshot();
       renderCards();
     }
 
@@ -225,7 +227,7 @@
         birth_date: A.$("#birth_date").value || "",
         gender: A.$("#gender").value,
         email: A.$("#email").value.trim(),
-        phone: A.$("#phone").value.trim(),
+        phone: A.arabicDigits(A.$("#phone").value.trim()),
         addr_detail: A.$("#addr_detail").value.trim(),
         license_type: A.$("#license_type").value.trim(),
         license_no: A.$("#license_no").value.trim(),
@@ -253,6 +255,17 @@
       };
       // ส่งเลขบัตรประชาชนเฉพาะเมื่อมีการกรอก เพื่อไม่ให้ลบค่าเดิมโดยไม่เจตนา
       if (nid) p.national_id = nid;
+      // เบอร์ที่ไม่ได้แก้ ส่งค่าเดิมกลับไปตามเดิม (แปลงเลขไทยเฉพาะเมื่อแก้)
+      if (orig && p.phone === orig.phone) p.phone = orig.phone_raw;
+
+      // รูปแบบข้อมูลตามเกณฑ์เดียวกับฐานข้อมูล ตรวจเฉพาะช่องที่แก้
+      var fe = A.memberFieldErrors(p, orig);
+      if (fe.length) {
+        A.toast(fe.map(function (x) { return x.msg; }).join(" · "), "err", 9000);
+        var bad = A.$("#" + fe[0].field);
+        if (bad) bad.focus();
+        return;
+      }
 
       A.busy(btn, true, "กำลังบันทึก...");
       A.rpc("admin_update_member", { p_member_id: memberId, p: p })

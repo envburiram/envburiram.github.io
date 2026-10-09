@@ -55,13 +55,15 @@
       </div>
 
       <div class="btn-row mt-2">
-        <button class="btn" id="btn-xlsx">ส่งออก Excel (รวมข้อมูลส่วนบุคคล)</button>
+        <button class="btn" id="btn-xlsx" hidden>ส่งออก Excel (รวมข้อมูลส่วนบุคคล)</button>
         <button class="btn btn-ghost" id="btn-xlsx-safe">ส่งออก Excel (ปิดบังข้อมูลอ่อนไหว)</button>
         <span class="small muted" id="count-label"></span>
       </div>
       <p class="hint mt-1 mb-0">
         การส่งออกข้อมูลทุกครั้งจะถูกบันทึกไว้ในประวัติการใช้งานระบบ
         ไฟล์ที่ส่งออกมีข้อมูลส่วนบุคคล กรุณาเก็บรักษาให้ปลอดภัยตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล
+        <span id="pii-only-super" hidden><br>การส่งออกแบบรวมเลขประจำตัวประชาชน เบอร์โทรศัพท์ และที่อยู่
+        ทำได้เฉพาะผู้ดูแลระดับสูงสุด</span>
       </p>
     </div>
 
